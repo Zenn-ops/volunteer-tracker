@@ -618,7 +618,7 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Manage Events modal — edit or remove events from the school calendar      */
+/*  Manage Events modal — add, edit, or remove events from the school calendar */
 /* -------------------------------------------------------------------------- */
 
 /** Split an ISO/date-time value into separate "YYYY-MM-DD" and "HH:MM" strings for the inputs. */
@@ -777,6 +777,14 @@ function EventsManagerModal({ onClose }) {
   const [error, setError] = useState(null);
   const [query, setQuery] = useState("");
 
+  // Add-event form state
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newDate, setNewDate] = useState(todayLocalISO);
+  const [newTime, setNewTime] = useState(nowLocalHHMM);
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -799,6 +807,39 @@ function EventsManagerModal({ onClose }) {
     return events.filter((e) => e[COL.event.title]?.toLowerCase().includes(q));
   }, [events, query]);
 
+  const handleAddEvent = async (e) => {
+    e.preventDefault();
+    setAddError(null);
+    if (!newTitle.trim() || !newDate || !newTime) {
+      setAddError("Title, date, and time are all required.");
+      return;
+    }
+    setAdding(true);
+    const combined = parseLocalDate(newDate);
+    const [h, m] = newTime.split(":").map(Number);
+    combined.setHours(h, m, 0, 0);
+
+    const { data, error: insErr } = await supabase
+      .from("events")
+      .insert({ [COL.event.title]: newTitle.trim(), [COL.event.date]: combined.toISOString() })
+      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}`)
+      .single();
+
+    setAdding(false);
+    if (insErr) {
+      setAddError(insErr.message);
+      return;
+    }
+    setEvents((prev) => [data, ...prev]);
+    setNewTitle("");
+    setNewDate(todayLocalISO());
+    setNewTime(nowLocalHHMM());
+    setShowAddForm(false);
+  };
+
+  const inputClass =
+    "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
@@ -820,6 +861,53 @@ function EventsManagerModal({ onClose }) {
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        {/* Toggleable add-event form */}
+        {showAddForm ? (
+          <form
+            onSubmit={handleAddEvent}
+            className="mb-4 shrink-0 space-y-2 rounded-lg border border-indigo-200 bg-indigo-50/40 p-3"
+          >
+            <input
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              placeholder="Event title (e.g. Beach Cleanup)"
+              className={inputClass}
+              autoFocus
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} className={inputClass} />
+              <input type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} className={inputClass} />
+            </div>
+            {addError && <p className="text-xs text-red-600">{addError}</p>}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAddForm(false)}
+                className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={adding}
+                className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {adding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                Add event
+              </button>
+            </div>
+          </form>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowAddForm(true)}
+            className="mb-4 inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-indigo-300 bg-indigo-50/50 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100"
+          >
+            <Plus className="h-4 w-4" />
+            Add a fixed event
+          </button>
+        )}
 
         <label className="relative mb-3 block shrink-0">
           <span className="sr-only">Search events</span>
