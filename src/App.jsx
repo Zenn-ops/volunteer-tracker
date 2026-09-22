@@ -40,7 +40,7 @@ const supabase = createClient(
 /* -------------------------------------------------------------------------- */
 const COL = {
   volunteer: { id: "id", name: "name", email: "email", tier: "membership_type" },
-  event: { id: "id", title: "title", date: "event_date" }, // timestamptz or date
+  event: { id: "id", title: "title", date: "event_date", endTime: "end_time" }, // event_date: timestamptz (start); end_time: time
   attendee: { id: "id", volunteerId: "volunteer_id", eventId: "event_id", role: "role_assigned" },
   schedule: {
     id: "id",
@@ -52,7 +52,7 @@ const COL = {
   },
 };
 
-const ROLE_OPTIONS = ["Photographer", "Videographer", "Documentation", "Logistics", "Registration", "Other"];
+const ROLE_OPTIONS = ["Photographer", "Videographer", "BMD", "AVP", "Switcher", "Shadow", "Writer", "Other"];
 
 /* -------------------------------------------------------------------------- */
 /*  Time helpers                                                              */
@@ -98,6 +98,23 @@ function parseEventDate(value) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return parseLocalDate(value);
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Render an event's start (and end, if present) as a friendly string, e.g. "Sat, Aug 14 · 9:00 AM – 1:00 PM" */
+function formatEventDateTime(dateValue, endTimeValue) {
+  const date = parseEventDate(dateValue);
+  if (!date) return "";
+  const hasTime = !/^\d{4}-\d{2}-\d{2}$/.test(dateValue);
+  const datePart = date.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  if (!hasTime) return datePart;
+  const startPart = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const endPart = endTimeValue ? formatTime(endTimeValue) : null;
+  return `${datePart} · ${startPart}${endPart ? ` – ${endPart}` : ""}`;
 }
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -325,7 +342,65 @@ function DirectoryView({ onSelect }) {
 /*  View 2: Profile                                                           */
 /* -------------------------------------------------------------------------- */
 
-function HistoryList({ history }) {
+function HistoryRow({ row, onDeleted }) {
+  const ev = row.events;
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleDelete = async () => {
+    const confirmed = window.confirm(
+      `Remove this attendance record${ev?.[COL.event.title] ? ` for "${ev[COL.event.title]}"` : ""}? This only removes the attendance log — the event itself stays on the calendar.`
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setError(null);
+    const { error: delErr } = await supabase.from("event_attendees").delete().eq("id", row.id);
+    setDeleting(false);
+
+    if (delErr) {
+      setError(delErr.message);
+      return;
+    }
+    onDeleted(row.id);
+  };
+
+  return (
+    <li className="relative">
+      <span className="absolute -left-[31px] top-4 h-2.5 w-2.5 rounded-full bg-indigo-500 ring-4 ring-white" />
+      <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <p className="font-semibold text-slate-900">{ev?.[COL.event.title] ?? "Untitled event"}</p>
+          <div className="flex shrink-0 items-center gap-2">
+            {row.role_assigned && (
+              <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                {row.role_assigned}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting}
+              className="rounded-md p-1 text-slate-400 hover:bg-red-50 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:opacity-50"
+              aria-label="Remove attendance record"
+            >
+              {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+        </div>
+        {ev?.[COL.event.date] && (
+          <p className="mt-1.5 flex items-center gap-1.5 text-sm text-slate-500">
+            <CalendarDays className="h-3.5 w-3.5" />
+            {formatEventDateTime(ev[COL.event.date], ev[COL.event.endTime])}
+          </p>
+        )}
+        {error && <p className="mt-1.5 text-xs text-red-600">{error}</p>}
+      </div>
+    </li>
+  );
+}
+
+function HistoryList({ history, onDeleted }) {
   if (history.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
@@ -336,43 +411,9 @@ function HistoryList({ history }) {
 
   return (
     <ol className="relative space-y-4 border-l border-slate-200 pl-6">
-      {history.map((row) => {
-        const ev = row.events;
-        const date = parseEventDate(ev?.[COL.event.date]);
-        const hasTime = date && !/^\d{4}-\d{2}-\d{2}$/.test(ev[COL.event.date]);
-        return (
-          <li key={row.id} className="relative">
-            <span className="absolute -left-[31px] top-4 h-2.5 w-2.5 rounded-full bg-indigo-500 ring-4 ring-white" />
-            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <p className="font-semibold text-slate-900">{ev?.[COL.event.title] ?? "Untitled event"}</p>
-                {row.role_assigned && (
-                  <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
-                    {row.role_assigned}
-                  </span>
-                )}
-              </div>
-              {date && (
-                <p className="mt-1.5 flex items-center gap-1.5 text-sm text-slate-500">
-                  <CalendarDays className="h-3.5 w-3.5" />
-                  {date.toLocaleDateString(undefined, {
-                    weekday: "short",
-                    year: "numeric",
-                    month: "short",
-                    day: "numeric",
-                  })}
-                  {hasTime && (
-                    <>
-                      <Clock className="ml-2 h-3.5 w-3.5" />
-                      {date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-                    </>
-                  )}
-                </p>
-              )}
-            </div>
-          </li>
-        );
-      })}
+      {history.map((row) => (
+        <HistoryRow key={row.id} row={row} onDeleted={onDeleted} />
+      ))}
     </ol>
   );
 }
@@ -389,6 +430,7 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
   const [newTitle, setNewTitle] = useState("");
   const [newDate, setNewDate] = useState(todayLocalISO);
   const [newTime, setNewTime] = useState(nowLocalHHMM);
+  const [newEndTime, setNewEndTime] = useState("");
   const [role, setRole] = useState("");
   const [customRole, setCustomRole] = useState("");
   const [saving, setSaving] = useState(false);
@@ -399,7 +441,7 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
     setEventsLoading(true);
     supabase
       .from("events")
-      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}`)
+      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}, ${COL.event.endTime}`)
       .order(COL.event.date, { ascending: false })
       .then(({ data, error }) => {
         if (cancelled) return;
@@ -427,7 +469,7 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
 
       if (mode === "new") {
         if (!newTitle.trim() || !newDate || !newTime) {
-          setError("Event title, date, and time are all required.");
+          setError("Event title, date, and start time are all required.");
           setSaving(false);
           return;
         }
@@ -438,7 +480,11 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
 
         const { data: created, error: evErr } = await supabase
           .from("events")
-          .insert({ [COL.event.title]: newTitle.trim(), [COL.event.date]: combined.toISOString() })
+          .insert({
+            [COL.event.title]: newTitle.trim(),
+            [COL.event.date]: combined.toISOString(),
+            [COL.event.endTime]: newEndTime || null,
+          })
           .select(COL.event.id)
           .single();
         if (evErr) throw evErr;
@@ -527,9 +573,7 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
                   {events.map((ev) => (
                     <option key={ev[COL.event.id]} value={ev[COL.event.id]}>
                       {ev[COL.event.title]}
-                      {ev[COL.event.date]
-                        ? ` — ${parseEventDate(ev[COL.event.date])?.toLocaleDateString()}`
-                        : ""}
+                      {ev[COL.event.date] ? ` — ${formatEventDateTime(ev[COL.event.date], ev[COL.event.endTime])}` : ""}
                     </option>
                   ))}
                 </select>
@@ -549,22 +593,31 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
                   className={inputClass}
                 />
               </label>
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-slate-700">Date</span>
+                <input
+                  type="date"
+                  value={newDate}
+                  onChange={(e) => setNewDate(e.target.value)}
+                  className={inputClass}
+                />
+              </label>
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Date</span>
-                  <input
-                    type="date"
-                    value={newDate}
-                    onChange={(e) => setNewDate(e.target.value)}
-                    className={inputClass}
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Time</span>
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Start time</span>
                   <input
                     type="time"
                     value={newTime}
                     onChange={(e) => setNewTime(e.target.value)}
+                    className={inputClass}
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700">End time</span>
+                  <input
+                    type="time"
+                    value={newEndTime}
+                    onChange={(e) => setNewEndTime(e.target.value)}
                     className={inputClass}
                   />
                 </label>
@@ -638,6 +691,7 @@ function EventRow({ event, onSaved, onDeleted }) {
   const [title, setTitle] = useState(event[COL.event.title] ?? "");
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(initial.time);
+  const [endTime, setEndTime] = useState(event[COL.event.endTime] ?? "");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState(null);
@@ -648,7 +702,7 @@ function EventRow({ event, onSaved, onDeleted }) {
   const handleSave = async () => {
     setError(null);
     if (!title.trim() || !date || !time) {
-      setError("Title, date, and time are all required.");
+      setError("Title, date, and start time are all required.");
       return;
     }
     setSaving(true);
@@ -658,9 +712,13 @@ function EventRow({ event, onSaved, onDeleted }) {
 
     const { data, error: updErr } = await supabase
       .from("events")
-      .update({ [COL.event.title]: title.trim(), [COL.event.date]: combined.toISOString() })
+      .update({
+        [COL.event.title]: title.trim(),
+        [COL.event.date]: combined.toISOString(),
+        [COL.event.endTime]: endTime || null,
+      })
       .eq(COL.event.id, event[COL.event.id])
-      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}`)
+      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}, ${COL.event.endTime}`)
       .single();
 
     setSaving(false);
@@ -698,10 +756,25 @@ function EventRow({ event, onSaved, onDeleted }) {
   if (editing) {
     return (
       <li className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-3">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto]">
+        <div className="space-y-2">
           <input value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} placeholder="Event title" />
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
-          <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputClass} />
+          <div className="grid grid-cols-3 gap-2">
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
+            <input
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              className={inputClass}
+              title="Start time"
+            />
+            <input
+              type="time"
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+              className={inputClass}
+              title="End time"
+            />
+          </div>
         </div>
         {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
         <div className="mt-2 flex justify-end gap-2">
@@ -713,6 +786,7 @@ function EventRow({ event, onSaved, onDeleted }) {
               setTitle(event[COL.event.title] ?? "");
               setDate(initial.date);
               setTime(initial.time);
+              setEndTime(event[COL.event.endTime] ?? "");
             }}
             className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
           >
@@ -737,14 +811,7 @@ function EventRow({ event, onSaved, onDeleted }) {
       <div className="min-w-0">
         <p className="truncate font-medium text-slate-900">{event[COL.event.title]}</p>
         <p className="text-xs text-slate-500">
-          {parseEventDate(event[COL.event.date])?.toLocaleString(undefined, {
-            weekday: "short",
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-            hour: "numeric",
-            minute: "2-digit",
-          })}
+          {formatEventDateTime(event[COL.event.date], event[COL.event.endTime])}
         </p>
         {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
       </div>
@@ -782,6 +849,7 @@ function EventsManagerModal({ onClose }) {
   const [newTitle, setNewTitle] = useState("");
   const [newDate, setNewDate] = useState(todayLocalISO);
   const [newTime, setNewTime] = useState(nowLocalHHMM);
+  const [newEndTime, setNewEndTime] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState(null);
 
@@ -790,7 +858,7 @@ function EventsManagerModal({ onClose }) {
     setError(null);
     const { data, error } = await supabase
       .from("events")
-      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}`)
+      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}, ${COL.event.endTime}`)
       .order(COL.event.date, { ascending: false });
     if (error) setError(error.message);
     else setEvents(data ?? []);
@@ -811,7 +879,7 @@ function EventsManagerModal({ onClose }) {
     e.preventDefault();
     setAddError(null);
     if (!newTitle.trim() || !newDate || !newTime) {
-      setAddError("Title, date, and time are all required.");
+      setAddError("Title, date, and start time are all required.");
       return;
     }
     setAdding(true);
@@ -821,8 +889,12 @@ function EventsManagerModal({ onClose }) {
 
     const { data, error: insErr } = await supabase
       .from("events")
-      .insert({ [COL.event.title]: newTitle.trim(), [COL.event.date]: combined.toISOString() })
-      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}`)
+      .insert({
+        [COL.event.title]: newTitle.trim(),
+        [COL.event.date]: combined.toISOString(),
+        [COL.event.endTime]: newEndTime || null,
+      })
+      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}, ${COL.event.endTime}`)
       .single();
 
     setAdding(false);
@@ -834,6 +906,7 @@ function EventsManagerModal({ onClose }) {
     setNewTitle("");
     setNewDate(todayLocalISO());
     setNewTime(nowLocalHHMM());
+    setNewEndTime("");
     setShowAddForm(false);
   };
 
@@ -875,9 +948,24 @@ function EventsManagerModal({ onClose }) {
               className={inputClass}
               autoFocus
             />
+            <input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} className={inputClass} />
             <div className="grid grid-cols-2 gap-2">
-              <input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} className={inputClass} />
-              <input type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} className={inputClass} />
+              <input
+                type="time"
+                value={newTime}
+                onChange={(e) => setNewTime(e.target.value)}
+                className={inputClass}
+                title="Start time"
+                placeholder="Start time"
+              />
+              <input
+                type="time"
+                value={newEndTime}
+                onChange={(e) => setNewEndTime(e.target.value)}
+                className={inputClass}
+                title="End time"
+                placeholder="End time"
+              />
             </div>
             {addError && <p className="text-xs text-red-600">{addError}</p>}
             <div className="flex justify-end gap-2">
@@ -1060,7 +1148,7 @@ function ProfileView({ volunteerId, onBack }) {
         supabase
           .from("event_attendees")
           .select(
-            `id, role_assigned, events ( ${COL.event.id}, ${COL.event.title}, ${COL.event.date} )`
+            `id, role_assigned, events ( ${COL.event.id}, ${COL.event.title}, ${COL.event.date}, ${COL.event.endTime} )`
           )
           .eq("volunteer_id", volunteerId),
         supabase
@@ -1170,7 +1258,12 @@ function ProfileView({ volunteerId, onBack }) {
                   Add attendance
                 </button>
               </div>
-              <HistoryList history={history} />
+              <HistoryList
+                history={history}
+                onDeleted={(attendeeId) =>
+                  setState((s) => ({ ...s, history: s.history.filter((row) => row.id !== attendeeId) }))
+                }
+              />
             </section>
 
             <section>
