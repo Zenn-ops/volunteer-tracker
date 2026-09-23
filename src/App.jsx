@@ -43,7 +43,7 @@ const supabase = createClient(
 /*  Anyone can sign in with Google, but isAdmin only becomes true for these.  */
 /* -------------------------------------------------------------------------- */
 const ADMIN_EMAILS = [
-  "you@example.com", // <-- replace with your actual Google email
+  "jrsumalinab@gmail.com", "jsumalinab@addu.edu.ph" // <-- replace with your actual Google email
 ];
 
 /* -------------------------------------------------------------------------- */
