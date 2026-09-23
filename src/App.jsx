@@ -22,6 +22,7 @@ import {
   Search,
   ShieldCheck,
   Trash2,
+  UserCheck,
   Users,
   X,
 } from "lucide-react";
@@ -42,7 +43,7 @@ const supabase = createClient(
 /*  Anyone can sign in with Google, but isAdmin only becomes true for these.  */
 /* -------------------------------------------------------------------------- */
 const ADMIN_EMAILS = [
-  "jrsumalinab@gmail.com", "jsumalinab@addu.edu.ph" // <-- replace with your actual Google email
+  "you@example.com", // <-- replace with your actual Google email
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -254,6 +255,7 @@ function DirectoryView({ onSelect }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [query, setQuery] = useState("");
+  const [showAvailability, setShowAvailability] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -316,17 +318,27 @@ function DirectoryView({ onSelect }) {
             Select a person to see their event history and check when they're free.
           </p>
         </div>
-        <label className="relative block sm:w-72">
-          <span className="sr-only">Search volunteers</span>
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name or email"
-            className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
-          />
-        </label>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <button
+            type="button"
+            onClick={() => setShowAvailability(true)}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50/50 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100"
+          >
+            <UserCheck className="h-4 w-4" />
+            Who's available?
+          </button>
+          <label className="relative block sm:w-72">
+            <span className="sr-only">Search volunteers</span>
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by name or email"
+              className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+            />
+          </label>
+        </div>
       </div>
 
       {error && (
@@ -356,6 +368,8 @@ function DirectoryView({ onSelect }) {
           </>
         )
       )}
+
+      {showAvailability && <AvailabilityOverviewModal onClose={() => setShowAvailability(false)} />}
     </div>
   );
 }
@@ -999,7 +1013,7 @@ function EventsManagerModal({ onClose }) {
 
 function AvailabilitySandbox({ schedules }) {
   const [date, setDate] = useState(todayLocalISO);
-  const [time, setTime] = useState(nowLocalHHMM);
+  const [time, setTime] = useState(() => roundToHalfHour(nowLocalHHMM()));
 
   const conflicts = useMemo(() => findConflicts(schedules, date, time), [schedules, date, time]);
   const ready = conflicts !== null;
@@ -1021,7 +1035,13 @@ function AvailabilitySandbox({ schedules }) {
           <span className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700">
             <Clock className="h-4 w-4 text-slate-400" /> Time
           </span>
-          <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputClass} />
+          <select value={time} onChange={(e) => setTime(e.target.value)} className={inputClass}>
+            {TIME_OPTIONS.map((t) => (
+              <option key={t} value={t}>
+                {formatTime(t)}
+              </option>
+            ))}
+          </select>
         </label>
       </div>
 
@@ -1068,6 +1088,212 @@ function AvailabilitySandbox({ schedules }) {
           ? "This volunteer has no class blocks on file, so they'll show as available."
           : `Checked against ${schedules.length} weekly class ${schedules.length === 1 ? "block" : "blocks"}.`}
       </p>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Availability Overview — pick a date/time, see every volunteer split into  */
+/*  Available vs In class. Time is a 30-minute-step select, not free-typed.   */
+/* -------------------------------------------------------------------------- */
+
+/** ["00:00", "00:30", "01:00", ... "23:30"] */
+const TIME_OPTIONS = Array.from({ length: 48 }, (_, i) => {
+  const h = String(Math.floor(i / 2)).padStart(2, "0");
+  const m = i % 2 === 0 ? "00" : "30";
+  return `${h}:${m}`;
+});
+
+/** Rounds "HH:MM" down to the nearest half hour, e.g. "13:12" -> "13:00". */
+function roundToHalfHour(timeStr) {
+  const [h, m] = timeStr.split(":").map(Number);
+  const roundedM = m < 30 ? "00" : "30";
+  return `${String(h).padStart(2, "0")}:${roundedM}`;
+}
+
+function AvailabilityOverviewModal({ onClose }) {
+  const [volunteers, setVolunteers] = useState([]);
+  const [schedulesByVolunteer, setSchedulesByVolunteer] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [date, setDate] = useState(todayLocalISO);
+  const [time, setTime] = useState(() => roundToHalfHour(nowLocalHHMM()));
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const [volRes, schedRes] = await Promise.all([
+      supabase
+        .from("volunteers")
+        .select(`${COL.volunteer.id}, ${COL.volunteer.name}, ${COL.volunteer.tier}`)
+        .order(COL.volunteer.name, { ascending: true }),
+      supabase
+        .from("class_schedules")
+        .select(
+          `${COL.schedule.id}, ${COL.schedule.volunteerId}, ${COL.schedule.course}, ${COL.schedule.day}, ${COL.schedule.start}, ${COL.schedule.end}`
+        ),
+    ]);
+
+    if (volRes.error || schedRes.error) {
+      setError((volRes.error || schedRes.error).message);
+      setLoading(false);
+      return;
+    }
+
+    const grouped = {};
+    for (const s of schedRes.data ?? []) {
+      const vid = s[COL.schedule.volunteerId];
+      (grouped[vid] ??= []).push(s);
+    }
+
+    setVolunteers(volRes.data ?? []);
+    setSchedulesByVolunteer(grouped);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const dayName = date ? WEEKDAYS[parseLocalDate(date).getDay()] : null;
+
+  const { available, inClass } = useMemo(() => {
+    const available = [];
+    const inClass = [];
+    for (const v of volunteers) {
+      const schedules = schedulesByVolunteer[v[COL.volunteer.id]] ?? [];
+      const conflicts = findConflicts(schedules, date, time) ?? [];
+      if (conflicts.length === 0) {
+        available.push(v);
+      } else {
+        inClass.push({ volunteer: v, conflicts });
+      }
+    }
+    return { available, inClass };
+  }, [volunteers, schedulesByVolunteer, date, time]);
+
+  const inputClass =
+    "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-slate-900">Who's available?</h3>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mb-5 grid shrink-0 grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700">
+              <CalendarDays className="h-4 w-4 text-slate-400" /> Date
+            </span>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
+          </label>
+          <label className="block">
+            <span className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700">
+              <Clock className="h-4 w-4 text-slate-400" /> Time
+            </span>
+            <select value={time} onChange={(e) => setTime(e.target.value)} className={inputClass}>
+              {TIME_OPTIONS.map((t) => (
+                <option key={t} value={t}>
+                  {formatTime(t)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {error && (
+          <div className="mb-3 shrink-0">
+            <ErrorBanner message={error} onRetry={load} />
+          </div>
+        )}
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-12" />
+              ))}
+            </div>
+          ) : !error && volunteers.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
+              No volunteers yet.
+            </div>
+          ) : (
+            !error && (
+              <div className="space-y-6">
+                <section>
+                  <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-emerald-700">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Available
+                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                      {available.length}
+                    </span>
+                  </h4>
+                  {available.length === 0 ? (
+                    <p className="text-sm text-slate-400">No one is free on {dayName} at {formatTime(time)}.</p>
+                  ) : (
+                    <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                      {available.map((v) => (
+                        <li
+                          key={v[COL.volunteer.id]}
+                          className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-1.5 text-sm text-emerald-900"
+                        >
+                          <TierBadge tier={v[COL.volunteer.tier]} />
+                          <span className="truncate">{v[COL.volunteer.name]}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section>
+                  <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-amber-700">
+                    <BookOpen className="h-4 w-4" />
+                    In class
+                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">
+                      {inClass.length}
+                    </span>
+                  </h4>
+                  {inClass.length === 0 ? (
+                    <p className="text-sm text-slate-400">No one has class on {dayName} at {formatTime(time)}.</p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {inClass.map(({ volunteer, conflicts }) => (
+                        <li
+                          key={volunteer[COL.volunteer.id]}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-1.5 text-sm text-amber-900"
+                        >
+                          <span className="truncate font-medium">{volunteer[COL.volunteer.name]}</span>
+                          <span className="text-xs text-amber-700">
+                            {conflicts.map((c) => c[COL.schedule.course]).join(", ")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </div>
+            )
+          )}
+        </div>
+      </div>
     </div>
   );
 }
