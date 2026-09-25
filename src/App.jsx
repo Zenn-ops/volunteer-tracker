@@ -105,7 +105,7 @@ function useAuth() {
 /* -------------------------------------------------------------------------- */
 const COL = {
   volunteer: { id: "id", name: "name", email: "email", tier: "membership_type" },
-  event: { id: "id", title: "title", date: "event_date" }, // timestamptz or date
+  event: { id: "id", title: "title", date: "event_date", endDate: "event_end_date" }, // both timestamptz
   attendee: { id: "id", volunteerId: "volunteer_id", eventId: "event_id", role: "role_assigned" },
   schedule: {
     id: "id",
@@ -163,6 +163,25 @@ function parseEventDate(value) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return parseLocalDate(value);
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** "YYYY-MM-DD" + "HH:MM" -> local Date with that exact time. */
+function combineLocalDateTime(dateStr, timeStr) {
+  const combined = parseLocalDate(dateStr);
+  const [h, m] = timeStr.split(":").map(Number);
+  combined.setHours(h, m, 0, 0);
+  return combined;
+}
+
+/** Formats a start time, or a "start – end" range when an end value is present. */
+function formatEventTimeRange(startValue, endValue) {
+  const start = parseEventDate(startValue);
+  if (!start) return "";
+  const startStr = start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const end = parseEventDate(endValue);
+  if (!end) return startStr;
+  const endStr = end.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return `${startStr} – ${endStr}`;
 }
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -251,7 +270,7 @@ function VolunteerCard({ volunteer, onOpen }) {
     <button
       type="button"
       onClick={() => onOpen(volunteer[COL.volunteer.id])}
-      className="group flex w-full items-start gap-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 text-left shadow-sm transition hover:border-indigo-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+      className="group flex w-full items-start gap-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 text-left shadow-sm dark:shadow-black/20 transition hover:border-indigo-300 dark:hover:border-indigo-600 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
     >
       <div
         className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
@@ -262,7 +281,7 @@ function VolunteerCard({ volunteer, onOpen }) {
         {initials}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold text-slate-900 dark:text-slate-100 group-hover:text-indigo-700">{name}</p>
+        <p className="truncate font-semibold text-slate-900 dark:text-slate-100 group-hover:text-indigo-700 dark:group-hover:text-indigo-300">{name}</p>
         <p className="mt-0.5 flex items-center gap-1.5 truncate text-sm text-slate-500 dark:text-slate-400">
           <Mail className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{email}</span>
@@ -442,7 +461,7 @@ function HistoryList({ history }) {
                   {hasTime && (
                     <>
                       <Clock className="ml-2 h-3.5 w-3.5" />
-                      {date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                      {formatEventTimeRange(ev[COL.event.date], ev[COL.event.endDate])}
                     </>
                   )}
                 </p>
@@ -467,6 +486,7 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
   const [newTitle, setNewTitle] = useState("");
   const [newDate, setNewDate] = useState(todayLocalISO);
   const [newTime, setNewTime] = useState(nowLocalHHMM);
+  const [newEndTime, setNewEndTime] = useState("");
   const [role, setRole] = useState("");
   const [customRole, setCustomRole] = useState("");
   const [saving, setSaving] = useState(false);
@@ -477,7 +497,7 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
     setEventsLoading(true);
     supabase
       .from("events")
-      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}`)
+      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}, ${COL.event.endDate}`)
       .order(COL.event.date, { ascending: false })
       .then(({ data, error }) => {
         if (cancelled) return;
@@ -509,14 +529,17 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
           setSaving(false);
           return;
         }
-        // Combine the date + time pickers into a single local-time ISO timestamp.
-        const combined = parseLocalDate(newDate);
-        const [h, m] = newTime.split(":").map(Number);
-        combined.setHours(h, m, 0, 0);
+        // Combine the date + time pickers into local-time ISO timestamps.
+        const combinedStart = combineLocalDateTime(newDate, newTime);
+        const combinedEnd = newEndTime ? combineLocalDateTime(newDate, newEndTime) : null;
 
         const { data: created, error: evErr } = await supabase
           .from("events")
-          .insert({ [COL.event.title]: newTitle.trim(), [COL.event.date]: combined.toISOString() })
+          .insert({
+            [COL.event.title]: newTitle.trim(),
+            [COL.event.date]: combinedStart.toISOString(),
+            [COL.event.endDate]: combinedEnd ? combinedEnd.toISOString() : null,
+          })
           .select(COL.event.id)
           .single();
         if (evErr) throw evErr;
@@ -544,11 +567,11 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
   };
 
   const inputClass =
-    "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
+    "w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 dark:bg-black/60 p-4"
       role="dialog"
       aria-modal="true"
       onClick={onClose}
@@ -606,7 +629,10 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
                     <option key={ev[COL.event.id]} value={ev[COL.event.id]}>
                       {ev[COL.event.title]}
                       {ev[COL.event.date]
-                        ? ` — ${parseEventDate(ev[COL.event.date])?.toLocaleDateString()}`
+                        ? ` — ${parseEventDate(ev[COL.event.date])?.toLocaleDateString()}, ${formatEventTimeRange(
+                            ev[COL.event.date],
+                            ev[COL.event.endDate]
+                          )}`
                         : ""}
                     </option>
                   ))}
@@ -637,14 +663,29 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
                     className={inputClass}
                   />
                 </label>
+                <div />
                 <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Time</span>
-                  <input
-                    type="time"
-                    value={newTime}
-                    onChange={(e) => setNewTime(e.target.value)}
-                    className={inputClass}
-                  />
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Start time</span>
+                  <select value={newTime} onChange={(e) => setNewTime(e.target.value)} className={inputClass}>
+                    {TIME_OPTIONS.map((t) => (
+                      <option key={t} value={t}>
+                        {formatTime(t)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    End time <span className="text-slate-400 dark:text-slate-500">(optional)</span>
+                  </span>
+                  <select value={newEndTime} onChange={(e) => setNewEndTime(e.target.value)} className={inputClass}>
+                    <option value="">No end time</option>
+                    {TIME_OPTIONS.map((t) => (
+                      <option key={t} value={t}>
+                        {formatTime(t)}
+                      </option>
+                    ))}
+                  </select>
                 </label>
               </div>
             </>
@@ -713,15 +754,17 @@ function splitDateTime(value) {
 function EventRow({ event, onSaved, onDeleted }) {
   const [editing, setEditing] = useState(false);
   const initial = splitDateTime(event[COL.event.date]);
+  const initialEnd = event[COL.event.endDate] ? splitDateTime(event[COL.event.endDate]).time : "";
   const [title, setTitle] = useState(event[COL.event.title] ?? "");
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(initial.time);
+  const [endTime, setEndTime] = useState(initialEnd);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState(null);
 
   const inputClass =
-    "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
+    "w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
   const handleSave = async () => {
     setError(null);
@@ -730,15 +773,18 @@ function EventRow({ event, onSaved, onDeleted }) {
       return;
     }
     setSaving(true);
-    const combined = parseLocalDate(date);
-    const [h, m] = time.split(":").map(Number);
-    combined.setHours(h, m, 0, 0);
+    const combinedStart = combineLocalDateTime(date, time);
+    const combinedEnd = endTime ? combineLocalDateTime(date, endTime) : null;
 
     const { data, error: updErr } = await supabase
       .from("events")
-      .update({ [COL.event.title]: title.trim(), [COL.event.date]: combined.toISOString() })
+      .update({
+        [COL.event.title]: title.trim(),
+        [COL.event.date]: combinedStart.toISOString(),
+        [COL.event.endDate]: combinedEnd ? combinedEnd.toISOString() : null,
+      })
       .eq(COL.event.id, event[COL.event.id])
-      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}`)
+      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}, ${COL.event.endDate}`)
       .single();
 
     setSaving(false);
@@ -776,10 +822,26 @@ function EventRow({ event, onSaved, onDeleted }) {
   if (editing) {
     return (
       <li className="rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/40 dark:bg-indigo-950/30 p-3">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto]">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
           <input value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} placeholder="Event title" />
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
-          <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputClass} />
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <select value={time} onChange={(e) => setTime(e.target.value)} className={inputClass}>
+            {TIME_OPTIONS.map((t) => (
+              <option key={t} value={t}>
+                {formatTime(t)}
+              </option>
+            ))}
+          </select>
+          <select value={endTime} onChange={(e) => setEndTime(e.target.value)} className={inputClass}>
+            <option value="">No end time</option>
+            {TIME_OPTIONS.map((t) => (
+              <option key={t} value={t}>
+                {formatTime(t)}
+              </option>
+            ))}
+          </select>
         </div>
         {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
         <div className="mt-2 flex justify-end gap-2">
@@ -791,6 +853,7 @@ function EventRow({ event, onSaved, onDeleted }) {
               setTitle(event[COL.event.title] ?? "");
               setDate(initial.date);
               setTime(initial.time);
+              setEndTime(initialEnd);
             }}
             className="rounded-md border border-slate-300 dark:border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
           >
@@ -820,9 +883,9 @@ function EventRow({ event, onSaved, onDeleted }) {
             month: "short",
             day: "numeric",
             year: "numeric",
-            hour: "numeric",
-            minute: "2-digit",
           })}
+          {", "}
+          {formatEventTimeRange(event[COL.event.date], event[COL.event.endDate])}
         </p>
         {error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
       </div>
@@ -860,6 +923,7 @@ function EventsManagerModal({ onClose }) {
   const [newTitle, setNewTitle] = useState("");
   const [newDate, setNewDate] = useState(todayLocalISO);
   const [newTime, setNewTime] = useState(nowLocalHHMM);
+  const [newEndTime, setNewEndTime] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState(null);
 
@@ -868,7 +932,7 @@ function EventsManagerModal({ onClose }) {
     setError(null);
     const { data, error } = await supabase
       .from("events")
-      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}`)
+      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}, ${COL.event.endDate}`)
       .order(COL.event.date, { ascending: false });
     if (error) setError(error.message);
     else setEvents(data ?? []);
@@ -893,14 +957,17 @@ function EventsManagerModal({ onClose }) {
       return;
     }
     setAdding(true);
-    const combined = parseLocalDate(newDate);
-    const [h, m] = newTime.split(":").map(Number);
-    combined.setHours(h, m, 0, 0);
+    const combinedStart = combineLocalDateTime(newDate, newTime);
+    const combinedEnd = newEndTime ? combineLocalDateTime(newDate, newEndTime) : null;
 
     const { data, error: insErr } = await supabase
       .from("events")
-      .insert({ [COL.event.title]: newTitle.trim(), [COL.event.date]: combined.toISOString() })
-      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}`)
+      .insert({
+        [COL.event.title]: newTitle.trim(),
+        [COL.event.date]: combinedStart.toISOString(),
+        [COL.event.endDate]: combinedEnd ? combinedEnd.toISOString() : null,
+      })
+      .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}, ${COL.event.endDate}`)
       .single();
 
     setAdding(false);
@@ -912,15 +979,16 @@ function EventsManagerModal({ onClose }) {
     setNewTitle("");
     setNewDate(todayLocalISO());
     setNewTime(nowLocalHHMM());
+    setNewEndTime("");
     setShowAddForm(false);
   };
 
   const inputClass =
-    "w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
+    "w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 dark:bg-black/60 p-4"
       role="dialog"
       aria-modal="true"
       onClick={onClose}
@@ -955,7 +1023,22 @@ function EventsManagerModal({ onClose }) {
             />
             <div className="grid grid-cols-2 gap-2">
               <input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} className={inputClass} />
-              <input type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} className={inputClass} />
+              <div />
+              <select value={newTime} onChange={(e) => setNewTime(e.target.value)} className={inputClass}>
+                {TIME_OPTIONS.map((t) => (
+                  <option key={t} value={t}>
+                    {formatTime(t)}
+                  </option>
+                ))}
+              </select>
+              <select value={newEndTime} onChange={(e) => setNewEndTime(e.target.value)} className={inputClass}>
+                <option value="">No end time</option>
+                {TIME_OPTIONS.map((t) => (
+                  <option key={t} value={t}>
+                    {formatTime(t)}
+                  </option>
+                ))}
+              </select>
             </div>
             {addError && <p className="text-xs text-red-600 dark:text-red-400">{addError}</p>}
             <div className="flex justify-end gap-2">
@@ -1045,7 +1128,7 @@ function AvailabilitySandbox({ schedules }) {
   const dayName = date ? WEEKDAYS[parseLocalDate(date).getDay()] : null;
 
   const inputClass =
-    "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
+    "w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
   return (
     <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm">
@@ -1198,11 +1281,11 @@ function AvailabilityOverviewModal({ onClose }) {
   }, [volunteers, schedulesByVolunteer, date, time]);
 
   const inputClass =
-    "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
+    "w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 dark:bg-black/60 p-4"
       role="dialog"
       aria-modal="true"
       onClick={onClose}
@@ -1350,7 +1433,7 @@ function ProfileView({ volunteerId, onBack, isAdmin }) {
         supabase
           .from("event_attendees")
           .select(
-            `id, role_assigned, events ( ${COL.event.id}, ${COL.event.title}, ${COL.event.date} )`
+            `id, role_assigned, events ( ${COL.event.id}, ${COL.event.title}, ${COL.event.date}, ${COL.event.endDate} )`
           )
           .eq("volunteer_id", volunteerId),
         supabase
