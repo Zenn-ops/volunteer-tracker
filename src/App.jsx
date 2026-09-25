@@ -15,12 +15,14 @@ import {
   LogIn,
   LogOut,
   Mail,
+  Moon,
   Pencil,
   Plus,
   RefreshCw,
   Save,
   Search,
   ShieldCheck,
+  Sun,
   Trash2,
   UserCheck,
   Users,
@@ -43,8 +45,31 @@ const supabase = createClient(
 /*  Anyone can sign in with Google, but isAdmin only becomes true for these.  */
 /* -------------------------------------------------------------------------- */
 const ADMIN_EMAILS = [
-  "jrsumalinab@gmail.com", "jsumalinab@addu.edu.ph" // <-- replace with your actual Google email
+  "jrsumalinab@gmail.com",
+  "jsumalinab@addu.edu.ph",
 ];
+
+/* -------------------------------------------------------------------------- */
+/*  Dark mode — persisted to localStorage, defaults to the OS/browser         */
+/*  preference on first visit. Toggling adds/removes the "dark" class on      */
+/*  <html>, which every dark: Tailwind class in this file responds to.        */
+/* -------------------------------------------------------------------------- */
+function useDarkMode() {
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const stored = window.localStorage.getItem("theme");
+    if (stored === "dark") return true;
+    if (stored === "light") return false;
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", isDark);
+    window.localStorage.setItem("theme", isDark ? "dark" : "light");
+  }, [isDark]);
+
+  return { isDark, toggleDark: () => setIsDark((d) => !d) };
+}
 
 /* -------------------------------------------------------------------------- */
 /*  Auth — Google sign-in via Supabase. Signed-in session gates admin actions */
@@ -183,17 +208,17 @@ function ErrorBanner({ message, onRetry }) {
   return (
     <div
       role="alert"
-      className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800"
+      className="flex items-start gap-3 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/40 p-4 text-sm text-red-800 dark:text-red-300"
     >
       <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
       <div className="flex-1">
         <p className="font-medium">Something went wrong</p>
-        <p className="mt-0.5 text-red-700">{message}</p>
+        <p className="mt-0.5 text-red-700 dark:text-red-300">{message}</p>
       </div>
       {onRetry && (
         <button
           onClick={onRetry}
-          className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 font-medium text-red-700 ring-1 ring-red-200 hover:bg-red-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+          className="inline-flex items-center gap-1.5 rounded-md bg-white dark:bg-slate-900 px-3 py-1.5 font-medium text-red-700 dark:text-red-300 ring-1 ring-red-200 hover:bg-red-100 dark:hover:bg-red-900/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
         >
           <RefreshCw className="h-3.5 w-3.5" />
           Try again
@@ -226,7 +251,7 @@ function VolunteerCard({ volunteer, onOpen }) {
     <button
       type="button"
       onClick={() => onOpen(volunteer[COL.volunteer.id])}
-      className="group flex w-full items-start gap-4 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-indigo-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+      className="group flex w-full items-start gap-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 text-left shadow-sm transition hover:border-indigo-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
     >
       <div
         className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
@@ -237,8 +262,8 @@ function VolunteerCard({ volunteer, onOpen }) {
         {initials}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold text-slate-900 group-hover:text-indigo-700">{name}</p>
-        <p className="mt-0.5 flex items-center gap-1.5 truncate text-sm text-slate-500">
+        <p className="truncate font-semibold text-slate-900 dark:text-slate-100 group-hover:text-indigo-700">{name}</p>
+        <p className="mt-0.5 flex items-center gap-1.5 truncate text-sm text-slate-500 dark:text-slate-400">
           <Mail className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{email}</span>
         </p>
@@ -294,10 +319,10 @@ function DirectoryView({ onSelect }) {
   const Section = ({ title, icon: Icon, items }) =>
     items.length > 0 && (
       <section className="mt-8">
-        <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-          <Icon className="h-4 w-4 text-slate-400" />
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
+          <Icon className="h-4 w-4 text-slate-400 dark:text-slate-500" />
           {title}
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+          <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">
             {items.length}
           </span>
         </h2>
@@ -313,8 +338,8 @@ function DirectoryView({ onSelect }) {
     <div>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Volunteer directory</h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">Volunteer directory</h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             Select a person to see their event history and check when they're free.
           </p>
         </div>
@@ -322,20 +347,20 @@ function DirectoryView({ onSelect }) {
           <button
             type="button"
             onClick={() => setShowAvailability(true)}
-            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50/50 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100"
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50/50 dark:bg-indigo-950/30 px-3 py-2 text-sm font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100"
           >
             <UserCheck className="h-4 w-4" />
             Who's available?
           </button>
           <label className="relative block sm:w-72">
             <span className="sr-only">Search volunteers</span>
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
             <input
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by name or email"
-              className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+              className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 py-2 pl-9 pr-3 text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
             />
           </label>
         </div>
@@ -359,7 +384,7 @@ function DirectoryView({ onSelect }) {
             <Section title="Core members" icon={ShieldCheck} items={core} />
             <Section title="Volunteers" icon={Users} items={regular} />
             {total === 0 && (
-              <div className="mt-12 rounded-xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500">
+              <div className="mt-12 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-sm text-slate-500 dark:text-slate-400">
                 {query
                   ? `No one matches "${query}". Try a different name or email.`
                   : "No volunteers yet. Add rows to the volunteers table in Supabase and they'll show up here."}
@@ -381,14 +406,14 @@ function DirectoryView({ onSelect }) {
 function HistoryList({ history }) {
   if (history.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
+      <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 p-8 text-center text-sm text-slate-500 dark:text-slate-400">
         No events attended yet.
       </div>
     );
   }
 
   return (
-    <ol className="relative space-y-4 border-l border-slate-200 pl-6">
+    <ol className="relative space-y-4 border-l border-slate-200 dark:border-slate-800 pl-6">
       {history.map((row) => {
         const ev = row.events;
         const date = parseEventDate(ev?.[COL.event.date]);
@@ -396,17 +421,17 @@ function HistoryList({ history }) {
         return (
           <li key={row.id} className="relative">
             <span className="absolute -left-[31px] top-4 h-2.5 w-2.5 rounded-full bg-indigo-500 ring-4 ring-white" />
-            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <p className="font-semibold text-slate-900">{ev?.[COL.event.title] ?? "Untitled event"}</p>
+                <p className="font-semibold text-slate-900 dark:text-slate-100">{ev?.[COL.event.title] ?? "Untitled event"}</p>
                 {row.role_assigned && (
-                  <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                  <span className="rounded-full bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-600/20 dark:ring-emerald-400/30">
                     {row.role_assigned}
                   </span>
                 )}
               </div>
               {date && (
-                <p className="mt-1.5 flex items-center gap-1.5 text-sm text-slate-500">
+                <p className="mt-1.5 flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400">
                   <CalendarDays className="h-3.5 w-3.5" />
                   {date.toLocaleDateString(undefined, {
                     weekday: "short",
@@ -529,14 +554,14 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+        className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-slate-900">Add attendance</h3>
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Add attendance</h3>
           <button
             onClick={onClose}
-            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            className="rounded-md p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -571,7 +596,7 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
 
           {mode === "existing" ? (
             <label className="block">
-              <span className="mb-1.5 block text-sm font-medium text-slate-700">Event</span>
+              <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Event</span>
               {eventsLoading ? (
                 <Skeleton className="h-10" />
               ) : (
@@ -588,13 +613,13 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
                 </select>
               )}
               {!eventsLoading && events.length === 0 && (
-                <p className="mt-1.5 text-xs text-slate-400">No events yet — switch to "New event" to create one.</p>
+                <p className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">No events yet — switch to "New event" to create one.</p>
               )}
             </label>
           ) : (
             <>
               <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-slate-700">Event title</span>
+                <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Event title</span>
                 <input
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
@@ -604,7 +629,7 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Date</span>
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Date</span>
                   <input
                     type="date"
                     value={newDate}
@@ -613,7 +638,7 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
                   />
                 </label>
                 <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-slate-700">Time</span>
+                  <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Time</span>
                   <input
                     type="time"
                     value={newTime}
@@ -626,7 +651,7 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
           )}
 
           <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-slate-700">Role</span>
+            <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Role</span>
             <select value={role} onChange={(e) => setRole(e.target.value)} className={inputClass}>
               <option value="">Select a role…</option>
               {ROLE_OPTIONS.map((r) => (
@@ -645,13 +670,13 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
             )}
           </label>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              className="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
             >
               Cancel
             </button>
@@ -750,13 +775,13 @@ function EventRow({ event, onSaved, onDeleted }) {
 
   if (editing) {
     return (
-      <li className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-3">
+      <li className="rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/40 dark:bg-indigo-950/30 p-3">
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto]">
           <input value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} placeholder="Event title" />
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
           <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputClass} />
         </div>
-        {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+        {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
         <div className="mt-2 flex justify-end gap-2">
           <button
             type="button"
@@ -767,7 +792,7 @@ function EventRow({ event, onSaved, onDeleted }) {
               setDate(initial.date);
               setTime(initial.time);
             }}
-            className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            className="rounded-md border border-slate-300 dark:border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
           >
             Cancel
           </button>
@@ -786,10 +811,10 @@ function EventRow({ event, onSaved, onDeleted }) {
   }
 
   return (
-    <li className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3">
+    <li className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3">
       <div className="min-w-0">
-        <p className="truncate font-medium text-slate-900">{event[COL.event.title]}</p>
-        <p className="text-xs text-slate-500">
+        <p className="truncate font-medium text-slate-900 dark:text-slate-100">{event[COL.event.title]}</p>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
           {parseEventDate(event[COL.event.date])?.toLocaleString(undefined, {
             weekday: "short",
             month: "short",
@@ -799,13 +824,13 @@ function EventRow({ event, onSaved, onDeleted }) {
             minute: "2-digit",
           })}
         </p>
-        {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+        {error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
       </div>
       <div className="flex shrink-0 gap-1">
         <button
           type="button"
           onClick={() => setEditing(true)}
-          className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+          className="rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
           aria-label={`Edit ${event[COL.event.title]}`}
         >
           <Pencil className="h-4 w-4" />
@@ -814,7 +839,7 @@ function EventRow({ event, onSaved, onDeleted }) {
           type="button"
           onClick={handleDelete}
           disabled={deleting}
-          className="rounded-md p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:opacity-50"
+          className="rounded-md p-1.5 text-slate-400 dark:text-slate-500 hover:bg-red-50 dark:hover:bg-red-900/40 hover:text-red-600 dark:hover:text-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 disabled:opacity-50"
           aria-label={`Delete ${event[COL.event.title]}`}
         >
           {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
@@ -901,14 +926,14 @@ function EventsManagerModal({ onClose }) {
       onClick={onClose}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+        className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-slate-900">Manage events</h3>
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Manage events</h3>
           <button
             onClick={onClose}
-            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            className="rounded-md p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -919,7 +944,7 @@ function EventsManagerModal({ onClose }) {
         {showAddForm ? (
           <form
             onSubmit={handleAddEvent}
-            className="mb-4 shrink-0 space-y-2 rounded-lg border border-indigo-200 bg-indigo-50/40 p-3"
+            className="mb-4 shrink-0 space-y-2 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/40 dark:bg-indigo-950/30 p-3"
           >
             <input
               value={newTitle}
@@ -932,12 +957,12 @@ function EventsManagerModal({ onClose }) {
               <input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} className={inputClass} />
               <input type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} className={inputClass} />
             </div>
-            {addError && <p className="text-xs text-red-600">{addError}</p>}
+            {addError && <p className="text-xs text-red-600 dark:text-red-400">{addError}</p>}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setShowAddForm(false)}
-                className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                className="rounded-md border border-slate-300 dark:border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
               >
                 Cancel
               </button>
@@ -955,7 +980,7 @@ function EventsManagerModal({ onClose }) {
           <button
             type="button"
             onClick={() => setShowAddForm(true)}
-            className="mb-4 inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-indigo-300 bg-indigo-50/50 px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100"
+            className="mb-4 inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50/50 dark:bg-indigo-950/30 px-3 py-2 text-sm font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100"
           >
             <Plus className="h-4 w-4" />
             Add a fixed event
@@ -964,13 +989,13 @@ function EventsManagerModal({ onClose }) {
 
         <label className="relative mb-3 block shrink-0">
           <span className="sr-only">Search events</span>
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
           <input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search events"
-            className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+            className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 py-2 pl-9 pr-3 text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
           />
         </label>
 
@@ -988,7 +1013,7 @@ function EventsManagerModal({ onClose }) {
               ))}
             </div>
           ) : filtered.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
+            <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 p-8 text-center text-sm text-slate-500 dark:text-slate-400">
               {query ? `No events match "${query}".` : "No events yet."}
             </div>
           ) : (
@@ -1023,17 +1048,17 @@ function AvailabilitySandbox({ schedules }) {
     "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <label className="block">
-          <span className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700">
-            <CalendarDays className="h-4 w-4 text-slate-400" /> Date
+          <span className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+            <CalendarDays className="h-4 w-4 text-slate-400 dark:text-slate-500" /> Date
           </span>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
         </label>
         <label className="block">
-          <span className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700">
-            <Clock className="h-4 w-4 text-slate-400" /> Time
+          <span className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+            <Clock className="h-4 w-4 text-slate-400 dark:text-slate-500" /> Time
           </span>
           <select value={time} onChange={(e) => setTime(e.target.value)} className={inputClass}>
             {TIME_OPTIONS.map((t) => (
@@ -1047,15 +1072,15 @@ function AvailabilitySandbox({ schedules }) {
 
       <div className="mt-5" aria-live="polite">
         {!ready ? (
-          <div className="rounded-lg border border-dashed border-slate-300 p-5 text-center text-sm text-slate-500">
+          <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 p-5 text-center text-sm text-slate-500 dark:text-slate-400">
             Pick a date and time to check availability.
           </div>
         ) : conflicts.length === 0 ? (
-          <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
+          <div className="flex items-start gap-3 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 p-4 text-emerald-900 dark:text-emerald-300">
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
             <div>
               <p className="font-semibold">Available</p>
-              <p className="mt-0.5 text-sm text-emerald-800">
+              <p className="mt-0.5 text-sm text-emerald-800 dark:text-emerald-300">
                 No classes on {dayName} at {formatTime(time)}.
               </p>
             </div>
@@ -1065,7 +1090,7 @@ function AvailabilitySandbox({ schedules }) {
             {conflicts.map((c) => (
               <div
                 key={c[COL.schedule.id]}
-                className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900"
+                className="flex items-start gap-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-4 text-amber-900 dark:text-amber-300"
               >
                 <BookOpen className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
                 <div>
@@ -1073,7 +1098,7 @@ function AvailabilitySandbox({ schedules }) {
                     In class: {c[COL.schedule.course]} ({formatTime(c[COL.schedule.start])} –{" "}
                     {formatTime(c[COL.schedule.end])})
                   </p>
-                  <p className="mt-0.5 text-sm text-amber-800">
+                  <p className="mt-0.5 text-sm text-amber-800 dark:text-amber-300">
                     Recurring every {dayName}.
                   </p>
                 </div>
@@ -1083,7 +1108,7 @@ function AvailabilitySandbox({ schedules }) {
         )}
       </div>
 
-      <p className="mt-4 text-xs text-slate-400">
+      <p className="mt-4 text-xs text-slate-400 dark:text-slate-500">
         {schedules.length === 0
           ? "This volunteer has no class blocks on file, so they'll show as available."
           : `Checked against ${schedules.length} weekly class ${schedules.length === 1 ? "block" : "blocks"}.`}
@@ -1183,14 +1208,14 @@ function AvailabilityOverviewModal({ onClose }) {
       onClick={onClose}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-slate-900">Who's available?</h3>
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Who's available?</h3>
           <button
             onClick={onClose}
-            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            className="rounded-md p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -1199,14 +1224,14 @@ function AvailabilityOverviewModal({ onClose }) {
 
         <div className="mb-5 grid shrink-0 grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="block">
-            <span className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700">
-              <CalendarDays className="h-4 w-4 text-slate-400" /> Date
+            <span className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+              <CalendarDays className="h-4 w-4 text-slate-400 dark:text-slate-500" /> Date
             </span>
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputClass} />
           </label>
           <label className="block">
-            <span className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700">
-              <Clock className="h-4 w-4 text-slate-400" /> Time
+            <span className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+              <Clock className="h-4 w-4 text-slate-400 dark:text-slate-500" /> Time
             </span>
             <select value={time} onChange={(e) => setTime(e.target.value)} className={inputClass}>
               {TIME_OPTIONS.map((t) => (
@@ -1232,28 +1257,28 @@ function AvailabilityOverviewModal({ onClose }) {
               ))}
             </div>
           ) : !error && volunteers.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
+            <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 p-8 text-center text-sm text-slate-500 dark:text-slate-400">
               No volunteers yet.
             </div>
           ) : (
             !error && (
               <div className="space-y-6">
                 <section>
-                  <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-emerald-700">
+                  <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
                     <CheckCircle2 className="h-4 w-4" />
                     Available
-                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                    <span className="rounded-full bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-600/20 dark:ring-emerald-400/30">
                       {available.length}
                     </span>
                   </h4>
                   {available.length === 0 ? (
-                    <p className="text-sm text-slate-400">No one is free on {dayName} at {formatTime(time)}.</p>
+                    <p className="text-sm text-slate-400 dark:text-slate-500">No one is free on {dayName} at {formatTime(time)}.</p>
                   ) : (
                     <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                       {available.map((v) => (
                         <li
                           key={v[COL.volunteer.id]}
-                          className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-1.5 text-sm text-emerald-900"
+                          className="flex items-center gap-2 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/30 px-3 py-1.5 text-sm text-emerald-900 dark:text-emerald-300"
                         >
                           <TierBadge tier={v[COL.volunteer.tier]} />
                           <span className="truncate">{v[COL.volunteer.name]}</span>
@@ -1264,24 +1289,24 @@ function AvailabilityOverviewModal({ onClose }) {
                 </section>
 
                 <section>
-                  <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-amber-700">
+                  <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-amber-700 dark:text-amber-300">
                     <BookOpen className="h-4 w-4" />
                     In class
-                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">
+                    <span className="rounded-full bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-600/20 dark:ring-amber-400/30">
                       {inClass.length}
                     </span>
                   </h4>
                   {inClass.length === 0 ? (
-                    <p className="text-sm text-slate-400">No one has class on {dayName} at {formatTime(time)}.</p>
+                    <p className="text-sm text-slate-400 dark:text-slate-500">No one has class on {dayName} at {formatTime(time)}.</p>
                   ) : (
                     <ul className="space-y-1.5">
                       {inClass.map(({ volunteer, conflicts }) => (
                         <li
                           key={volunteer[COL.volunteer.id]}
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-1.5 text-sm text-amber-900"
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/30 px-3 py-1.5 text-sm text-amber-900 dark:text-amber-300"
                         >
                           <span className="truncate font-medium">{volunteer[COL.volunteer.name]}</span>
-                          <span className="text-xs text-amber-700">
+                          <span className="text-xs text-amber-700 dark:text-amber-300">
                             {conflicts.map((c) => c[COL.schedule.course]).join(", ")}
                           </span>
                         </li>
@@ -1373,7 +1398,7 @@ function ProfileView({ volunteerId, onBack, isAdmin }) {
     <div>
       <button
         onClick={onBack}
-        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
       >
         <ArrowLeft className="h-4 w-4" />
         Back to directory
@@ -1401,16 +1426,16 @@ function ProfileView({ volunteerId, onBack, isAdmin }) {
 
       {!loading && volunteer && (
         <>
-          <header className="mt-6 border-b border-slate-200 pb-6">
+          <header className="mt-6 border-b border-slate-200 dark:border-slate-800 pb-6">
             <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
                 {volunteer[COL.volunteer.name]}
               </h1>
               <TierBadge tier={volunteer[COL.volunteer.tier]} />
             </div>
             <a
               href={`mailto:${volunteer[COL.volunteer.email]}`}
-              className="mt-1.5 inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-indigo-600"
+              className="mt-1.5 inline-flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400 hover:text-indigo-600"
             >
               <Mail className="h-4 w-4" />
               {volunteer[COL.volunteer.email]}
@@ -1420,10 +1445,10 @@ function ProfileView({ volunteerId, onBack, isAdmin }) {
           <div className="mt-8 grid grid-cols-1 gap-10 lg:grid-cols-2">
             <section>
               <div className="mb-4 flex items-center justify-between gap-2">
-                <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
-                  <History className="h-5 w-5 text-slate-400" />
+                <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
+                  <History className="h-5 w-5 text-slate-400 dark:text-slate-500" />
                   Event history
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                  <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-500 dark:text-slate-400">
                     {history.length}
                   </span>
                 </h2>
@@ -1441,11 +1466,11 @@ function ProfileView({ volunteerId, onBack, isAdmin }) {
             </section>
 
             <section>
-              <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold text-slate-900">
-                <CalendarClock className="h-5 w-5 text-slate-400" />
+              <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
+                <CalendarClock className="h-5 w-5 text-slate-400 dark:text-slate-500" />
                 Availability checker
               </h2>
-              <p className="mb-4 text-sm text-slate-500">
+              <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
                 Choose a date and time to see if a class gets in the way.
               </p>
               <AvailabilitySandbox schedules={schedules} />
@@ -1473,20 +1498,30 @@ export default function App() {
   const [selectedVolunteerId, setSelectedVolunteerId] = useState(null);
   const [showEventsManager, setShowEventsManager] = useState(false);
   const { session, isAdmin, loading: authLoading, signInWithGoogle, signOut } = useAuth();
+  const { isDark, toggleDark } = useDarkMode();
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 antialiased">
-      <nav className="border-b border-slate-200 bg-white">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased">
+      <nav className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-3 sm:px-6">
           <div className="flex items-center gap-2">
             <CalendarCheck className="h-5 w-5 text-indigo-600" />
             <span className="font-semibold">Volunteer tracker</span>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleDark}
+              aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+              className="inline-flex items-center justify-center rounded-lg border border-slate-300 dark:border-slate-700 p-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            >
+              {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
+
             {isAdmin && (
               <button
                 onClick={() => setShowEventsManager(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
               >
                 <Calendar className="h-3.5 w-3.5" />
                 Manage events
@@ -1494,22 +1529,22 @@ export default function App() {
             )}
 
             {authLoading ? (
-              <div className="h-8 w-24 animate-pulse rounded-lg bg-slate-100" />
+              <div className="h-8 w-24 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" />
             ) : session ? (
               <div className="flex items-center gap-2">
                 {session.user?.user_metadata?.avatar_url && (
                   <img
                     src={session.user.user_metadata.avatar_url}
                     alt=""
-                    className="h-7 w-7 rounded-full ring-1 ring-slate-200"
+                    className="h-7 w-7 rounded-full ring-1 ring-slate-200 dark:ring-slate-700"
                   />
                 )}
                 {!isAdmin && (
-                  <span className="text-xs text-slate-400">Not an admin account</span>
+                  <span className="text-xs text-slate-400 dark:text-slate-500">Not an admin account</span>
                 )}
                 <button
                   onClick={signOut}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
                 >
                   <LogOut className="h-3.5 w-3.5" />
                   Sign out
@@ -1518,7 +1553,7 @@ export default function App() {
             ) : (
               <button
                 onClick={signInWithGoogle}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
               >
                 <LogIn className="h-3.5 w-3.5" />
                 Admin sign in
