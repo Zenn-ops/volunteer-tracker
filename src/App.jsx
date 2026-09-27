@@ -104,7 +104,14 @@ function useAuth() {
 /*  Column mapping — edit these if your schema uses different names           */
 /* -------------------------------------------------------------------------- */
 const COL = {
-  volunteer: { id: "id", name: "name", email: "email", tier: "membership_type" },
+  volunteer: {
+    id: "id",
+    name: "name",
+    email: "email",
+    tier: "membership_type",
+    yearCourse: "course_year",
+    contact: "contact_number",
+  },
   event: { id: "id", title: "title", date: "event_date", endDate: "event_end_date" }, // both timestamptz
   attendee: { id: "id", volunteerId: "volunteer_id", eventId: "event_id", role: "role_assigned" },
   schedule: {
@@ -184,6 +191,29 @@ function formatEventTimeRange(startValue, endValue) {
   return `${startStr} – ${endStr}`;
 }
 
+/**
+ * Finds an existing event with the same title (case/whitespace-insensitive) on the
+ * same calendar day. `excludeId` lets an edit skip matching against itself.
+ */
+function findDuplicateEvent(events, title, dateStr, excludeId = null) {
+  const normalizedTitle = title.trim().toLowerCase();
+  if (!normalizedTitle || !dateStr) return null;
+  return (
+    events.find((ev) => {
+      if (excludeId != null && ev[COL.event.id] === excludeId) return false;
+      const evTitle = (ev[COL.event.title] ?? "").trim().toLowerCase();
+      if (evTitle !== normalizedTitle) return false;
+      const evDate = parseEventDate(ev[COL.event.date]);
+      if (!evDate) return false;
+      return (
+        evDate.getFullYear() === parseLocalDate(dateStr).getFullYear() &&
+        evDate.getMonth() === parseLocalDate(dateStr).getMonth() &&
+        evDate.getDate() === parseLocalDate(dateStr).getDate()
+      );
+    }) ?? null
+  );
+}
+
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /**
@@ -259,6 +289,7 @@ function VolunteerCard({ volunteer, onOpen }) {
   const name = volunteer[COL.volunteer.name];
   const email = volunteer[COL.volunteer.email];
   const tier = volunteer[COL.volunteer.tier];
+  const program = volunteer[COL.volunteer.yearCourse];
   const initials = (name || "?")
     .split(" ")
     .map((p) => p[0])
@@ -274,7 +305,9 @@ function VolunteerCard({ volunteer, onOpen }) {
     >
       <div
         className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
-          tier === "core" ? "bg-indigo-600 text-white" : "bg-slate-200 text-slate-700"
+          tier === "core"
+            ? "bg-indigo-600 text-white"
+            : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200"
         }`}
         aria-hidden="true"
       >
@@ -282,6 +315,9 @@ function VolunteerCard({ volunteer, onOpen }) {
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate font-semibold text-slate-900 dark:text-slate-100 group-hover:text-indigo-700 dark:group-hover:text-indigo-300">{name}</p>
+        {program && (
+          <p className="truncate text-xs text-slate-500 dark:text-slate-400">{program}</p>
+        )}
         <p className="mt-0.5 flex items-center gap-1.5 truncate text-sm text-slate-500 dark:text-slate-400">
           <Mail className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{email}</span>
@@ -294,12 +330,13 @@ function VolunteerCard({ volunteer, onOpen }) {
   );
 }
 
-function DirectoryView({ onSelect }) {
+function DirectoryView({ onSelect, isAdmin }) {
   const [volunteers, setVolunteers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [query, setQuery] = useState("");
   const [showAvailability, setShowAvailability] = useState(false);
+  const [showAddVolunteer, setShowAddVolunteer] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -307,7 +344,7 @@ function DirectoryView({ onSelect }) {
     const { data, error } = await supabase
       .from("volunteers")
       .select(
-        `${COL.volunteer.id}, ${COL.volunteer.name}, ${COL.volunteer.email}, ${COL.volunteer.tier}`
+        `${COL.volunteer.id}, ${COL.volunteer.name}, ${COL.volunteer.email}, ${COL.volunteer.tier}, ${COL.volunteer.yearCourse}`
       )
       .order(COL.volunteer.name, { ascending: true });
     if (error) setError(error.message);
@@ -325,7 +362,8 @@ function DirectoryView({ onSelect }) {
       ? volunteers.filter(
           (v) =>
             v[COL.volunteer.name]?.toLowerCase().includes(q) ||
-            v[COL.volunteer.email]?.toLowerCase().includes(q)
+            v[COL.volunteer.email]?.toLowerCase().includes(q) ||
+            v[COL.volunteer.yearCourse]?.toLowerCase().includes(q)
         )
       : volunteers;
     return {
@@ -363,6 +401,16 @@ function DirectoryView({ onSelect }) {
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setShowAddVolunteer(true)}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            >
+              <Plus className="h-4 w-4" />
+              Add volunteer
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setShowAvailability(true)}
@@ -378,7 +426,7 @@ function DirectoryView({ onSelect }) {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by name or email"
+              placeholder="Search by name, email, or program"
               className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 py-2 pl-9 pr-3 text-sm placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
             />
           </label>
@@ -414,6 +462,209 @@ function DirectoryView({ onSelect }) {
       )}
 
       {showAvailability && <AvailabilityOverviewModal onClose={() => setShowAvailability(false)} />}
+
+      {isAdmin && showAddVolunteer && (
+        <VolunteerFormModal
+          mode="create"
+          onClose={() => setShowAddVolunteer(false)}
+          onSaved={() => {
+            setShowAddVolunteer(false);
+            load();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Add / Edit Volunteer modal — admin-only create and edit of a volunteer    */
+/*  record: name, email, tier, program, year & course, contact number.        */
+/* -------------------------------------------------------------------------- */
+
+function VolunteerFormModal({ mode, volunteer, onClose, onSaved, onDeleted }) {
+  const isEdit = mode === "edit";
+  const [name, setName] = useState(volunteer?.[COL.volunteer.name] ?? "");
+  const [email, setEmail] = useState(volunteer?.[COL.volunteer.email] ?? "");
+  const [tier, setTier] = useState(volunteer?.[COL.volunteer.tier] ?? "volunteer");
+  const [yearCourse, setYearCourse] = useState(volunteer?.[COL.volunteer.yearCourse] ?? "");
+  const [contact, setContact] = useState(volunteer?.[COL.volunteer.contact] ?? "");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState(null);
+
+  const inputClass =
+    "w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!name.trim() || !email.trim()) {
+      setError("Name and email are required.");
+      return;
+    }
+
+    setSaving(true);
+    const payload = {
+      [COL.volunteer.name]: name.trim(),
+      [COL.volunteer.email]: email.trim(),
+      [COL.volunteer.tier]: tier,
+      [COL.volunteer.yearCourse]: yearCourse.trim() || null,
+      [COL.volunteer.contact]: contact.trim() || null,
+    };
+
+    const query = isEdit
+      ? supabase.from("volunteers").update(payload).eq(COL.volunteer.id, volunteer[COL.volunteer.id])
+      : supabase.from("volunteers").insert(payload);
+
+    const { error: saveErr } = await query;
+    setSaving(false);
+
+    if (saveErr) {
+      setError(
+        saveErr.message.includes("duplicate") || saveErr.message.includes("unique")
+          ? "A volunteer with that email already exists."
+          : saveErr.message
+      );
+      return;
+    }
+
+    onSaved();
+  };
+
+  const handleDelete = async () => {
+    const confirmed = window.confirm(
+      `Remove ${volunteer[COL.volunteer.name]} from the system? This also deletes their attendance history and class schedule. This can't be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setError(null);
+    const { error: delErr } = await supabase
+      .from("volunteers")
+      .delete()
+      .eq(COL.volunteer.id, volunteer[COL.volunteer.id]);
+    setDeleting(false);
+
+    if (delErr) {
+      setError(
+        delErr.message.includes("violates foreign key")
+          ? "Can't delete — this volunteer still has linked records that aren't set to cascade delete."
+          : delErr.message
+      );
+      return;
+    }
+    onDeleted(volunteer[COL.volunteer.id]);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 dark:bg-black/60 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+            {isEdit ? "Edit volunteer" : "Add volunteer"}
+          </h3>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Full name</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} className={inputClass} placeholder="e.g. Ana Cruz" />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Email</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. ana@addu.edu.ph"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Tier</span>
+            <select value={tier} onChange={(e) => setTier(e.target.value)} className={inputClass}>
+              <option value="volunteer">Volunteer</option>
+              <option value="core">Core member</option>
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Program & year</span>
+            <input
+              value={yearCourse}
+              onChange={(e) => setYearCourse(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. AB Psychology 3rd yr"
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+              Contact number <span className="text-slate-400 dark:text-slate-500">(optional)</span>
+            </span>
+            <input
+              value={contact}
+              onChange={(e) => setContact(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. 09171234567"
+            />
+          </label>
+
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+          <div className="flex items-center justify-between gap-2 pt-2">
+            {isEdit ? (
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting || saving}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 dark:border-red-800 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50"
+              >
+                {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                Remove
+              </button>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving || deleting}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {saving ? "Saving…" : isEdit ? "Save changes" : "Add volunteer"}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
@@ -478,7 +729,7 @@ function HistoryList({ history }) {
 /*  Add Attendance modal — logs an event + role + date/time for a volunteer   */
 /* -------------------------------------------------------------------------- */
 
-function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
+function AddAttendanceModal({ volunteerId, existingHistory, onClose, onSaved }) {
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(true);
   const [mode, setMode] = useState("existing"); // "existing" | "new"
@@ -529,6 +780,12 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
           setSaving(false);
           return;
         }
+        const duplicate = findDuplicateEvent(events, newTitle, newDate);
+        if (duplicate) {
+          setError(`"${duplicate[COL.event.title]}" is already on the calendar for that day.`);
+          setSaving(false);
+          return;
+        }
         // Combine the date + time pickers into local-time ISO timestamps.
         const combinedStart = combineLocalDateTime(newDate, newTime);
         const combinedEnd = newEndTime ? combineLocalDateTime(newDate, newEndTime) : null;
@@ -546,6 +803,15 @@ function AddAttendanceModal({ volunteerId, onClose, onSaved }) {
         finalEventId = created[COL.event.id];
       } else if (!finalEventId) {
         setError("Pick an event.");
+        setSaving(false);
+        return;
+      }
+
+      const alreadyLogged = (existingHistory ?? []).some(
+        (row) => row.events?.[COL.event.id] === finalEventId
+      );
+      if (alreadyLogged) {
+        setError("This volunteer is already logged as attending that event.");
         setSaving(false);
         return;
       }
@@ -751,7 +1017,7 @@ function splitDateTime(value) {
   return { date, time };
 }
 
-function EventRow({ event, onSaved, onDeleted }) {
+function EventRow({ event, allEvents, onSaved, onDeleted }) {
   const [editing, setEditing] = useState(false);
   const initial = splitDateTime(event[COL.event.date]);
   const initialEnd = event[COL.event.endDate] ? splitDateTime(event[COL.event.endDate]).time : "";
@@ -770,6 +1036,11 @@ function EventRow({ event, onSaved, onDeleted }) {
     setError(null);
     if (!title.trim() || !date || !time) {
       setError("Title, date, and time are all required.");
+      return;
+    }
+    const duplicate = findDuplicateEvent(allEvents, title, date, event[COL.event.id]);
+    if (duplicate) {
+      setError(`"${duplicate[COL.event.title]}" is already on the calendar for that day.`);
       return;
     }
     setSaving(true);
@@ -956,6 +1227,11 @@ function EventsManagerModal({ onClose }) {
       setAddError("Title, date, and time are all required.");
       return;
     }
+    const duplicate = findDuplicateEvent(events, newTitle, newDate);
+    if (duplicate) {
+      setAddError(`"${duplicate[COL.event.title]}" is already on the calendar for that day.`);
+      return;
+    }
     setAdding(true);
     const combinedStart = combineLocalDateTime(newDate, newTime);
     const combinedEnd = newEndTime ? combineLocalDateTime(newDate, newEndTime) : null;
@@ -1066,7 +1342,7 @@ function EventsManagerModal({ onClose }) {
             className="mb-4 inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-indigo-300 dark:border-indigo-700 bg-indigo-50/50 dark:bg-indigo-950/30 px-3 py-2 text-sm font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100"
           >
             <Plus className="h-4 w-4" />
-            Add a fixed event
+            Add event
           </button>
         )}
 
@@ -1105,6 +1381,7 @@ function EventsManagerModal({ onClose }) {
                 <EventRow
                   key={ev[COL.event.id]}
                   event={ev}
+                  allEvents={events}
                   onSaved={(updated) =>
                     setEvents((prev) => prev.map((e) => (e[COL.event.id] === updated[COL.event.id] ? updated : e)))
                   }
@@ -1406,7 +1683,7 @@ function AvailabilityOverviewModal({ onClose }) {
   );
 }
 
-function ProfileView({ volunteerId, onBack, isAdmin }) {
+function ProfileView({ volunteerId, onBack, isAdmin, onVolunteerDeleted }) {
   const [state, setState] = useState({
     loading: true,
     error: null,
@@ -1416,6 +1693,7 @@ function ProfileView({ volunteerId, onBack, isAdmin }) {
   });
   const [attempt, setAttempt] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditVolunteer, setShowEditVolunteer] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1426,7 +1704,9 @@ function ProfileView({ volunteerId, onBack, isAdmin }) {
       const [volRes, historyRes, scheduleRes] = await Promise.all([
         supabase
           .from("volunteers")
-          .select(`${COL.volunteer.id}, ${COL.volunteer.name}, ${COL.volunteer.email}, ${COL.volunteer.tier}`)
+          .select(
+            `${COL.volunteer.id}, ${COL.volunteer.name}, ${COL.volunteer.email}, ${COL.volunteer.tier}, ${COL.volunteer.yearCourse}, ${COL.volunteer.contact}`
+          )
           .eq(COL.volunteer.id, volunteerId)
           .single(),
         // Joined query: attendance rows with their event embedded.
@@ -1510,19 +1790,41 @@ function ProfileView({ volunteerId, onBack, isAdmin }) {
       {!loading && volunteer && (
         <>
           <header className="mt-6 border-b border-slate-200 dark:border-slate-800 pb-6">
-            <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-                {volunteer[COL.volunteer.name]}
-              </h1>
-              <TierBadge tier={volunteer[COL.volunteer.tier]} />
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+                    {volunteer[COL.volunteer.name]}
+                  </h1>
+                  <TierBadge tier={volunteer[COL.volunteer.tier]} />
+                </div>
+                {volunteer[COL.volunteer.yearCourse] && (
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    {volunteer[COL.volunteer.yearCourse]}
+                  </p>
+                )}
+                <a
+                  href={`mailto:${volunteer[COL.volunteer.email]}`}
+                  className="mt-1.5 inline-flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400 hover:text-indigo-600"
+                >
+                  <Mail className="h-4 w-4" />
+                  {volunteer[COL.volunteer.email]}
+                </a>
+                {volunteer[COL.volunteer.contact] && (
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{volunteer[COL.volunteer.contact]}</p>
+                )}
+              </div>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setShowEditVolunteer(true)}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit volunteer
+                </button>
+              )}
             </div>
-            <a
-              href={`mailto:${volunteer[COL.volunteer.email]}`}
-              className="mt-1.5 inline-flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400 hover:text-indigo-600"
-            >
-              <Mail className="h-4 w-4" />
-              {volunteer[COL.volunteer.email]}
-            </a>
           </header>
 
           <div className="mt-8 grid grid-cols-1 gap-10 lg:grid-cols-2">
@@ -1565,8 +1867,25 @@ function ProfileView({ volunteerId, onBack, isAdmin }) {
       {isAdmin && showAddModal && (
         <AddAttendanceModal
           volunteerId={volunteerId}
+          existingHistory={history}
           onClose={() => setShowAddModal(false)}
           onSaved={() => setAttempt((n) => n + 1)}
+        />
+      )}
+
+      {isAdmin && showEditVolunteer && volunteer && (
+        <VolunteerFormModal
+          mode="edit"
+          volunteer={volunteer}
+          onClose={() => setShowEditVolunteer(false)}
+          onSaved={() => {
+            setShowEditVolunteer(false);
+            setAttempt((n) => n + 1);
+          }}
+          onDeleted={(id) => {
+            setShowEditVolunteer(false);
+            onVolunteerDeleted?.(id);
+          }}
         />
       )}
     </div>
@@ -1648,13 +1967,14 @@ export default function App() {
 
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         {selectedVolunteerId === null ? (
-          <DirectoryView onSelect={setSelectedVolunteerId} />
+          <DirectoryView onSelect={setSelectedVolunteerId} isAdmin={isAdmin} />
         ) : (
           <ProfileView
             key={selectedVolunteerId}
             volunteerId={selectedVolunteerId}
             onBack={() => setSelectedVolunteerId(null)}
             isAdmin={isAdmin}
+            onVolunteerDeleted={() => setSelectedVolunteerId(null)}
           />
         )}
       </main>
