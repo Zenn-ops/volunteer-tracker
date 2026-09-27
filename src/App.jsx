@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { Analytics } from "@vercel/analytics/react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -1980,6 +1981,8 @@ export default function App() {
       </main>
 
       {isAdmin && showEventsManager && <EventsManagerModal onClose={() => setShowEventsManager(false)} />}
+
+      <Analytics />
     </div>
   );
 }
