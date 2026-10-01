@@ -28,6 +28,9 @@ import {
   UserCheck,
   Users,
   X,
+  Cake,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 /* -------------------------------------------------------------------------- */
@@ -112,6 +115,7 @@ const COL = {
     tier: "membership_type",
     yearCourse: "course_year",
     contact: "contact_number",
+    birthday: "birthday",
   },
   event: { id: "id", title: "title", date: "event_date", endDate: "event_end_date" }, // both timestamptz
   attendee: { id: "id", volunteerId: "volunteer_id", eventId: "event_id", role: "role_assigned" },
@@ -190,6 +194,47 @@ function formatEventTimeRange(startValue, endValue) {
   if (!end) return startStr;
   const endStr = end.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   return `${startStr} – ${endStr}`;
+}
+
+function parseBirthday(value) {
+  if (!value) return null;
+  // "MM-DD" shorthand
+  const short = value.match(/^(\d{2})-(\d{2})$/);
+  if (short) return { month: Number(short[1]), day: Number(short[2]) };
+  // Full date / timestamp
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return { month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+}
+
+/** Returns true when a birthday MM/DD falls on the given Date (local). */
+function birthdayFallsOn(value, date) {
+  const bd = parseBirthday(value);
+  if (!bd) return false;
+  return bd.month === date.getMonth() + 1 && bd.day === date.getDate();
+}
+
+/** Returns true when an event's start timestamp falls on the given Date (local). */
+function eventFallsOn(eventDateValue, date) {
+  const d = parseEventDate(eventDateValue);
+  if (!d) return false;
+  return (
+    d.getFullYear() === date.getFullYear() &&
+    d.getMonth() === date.getMonth() &&
+    d.getDate() === date.getDate()
+  );
+}
+
+/** Returns every Date in the 6-week grid that contains `year`/`month` (1-indexed). */
+function buildCalendarGrid(year, month) {
+  const firstOfMonth = new Date(year, month - 1, 1);
+  const startOffset = firstOfMonth.getDay(); // 0 = Sun
+  const days = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(year, month - 1, 1 - startOffset + i);
+    days.push(d);
+  }
+  return days;
 }
 
 /**
@@ -1876,7 +1921,7 @@ function ProfileView({ volunteerId, onBack, isAdmin, onVolunteerDeleted }) {
 
       {isAdmin && showEditVolunteer && volunteer && (
         <VolunteerFormModal
-          mode="edit"
+          
           volunteer={volunteer}
           onClose={() => setShowEditVolunteer(false)}
           onSaved={() => {
@@ -1893,24 +1938,516 @@ function ProfileView({ volunteerId, onBack, isAdmin, onVolunteerDeleted }) {
   );
 }
 
+const MONTH_NAMES = [
+  "January","February","March","April","May","June",
+  "July","August","September","October","November","December",
+];
+
+function CalendarView() {
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth() + 1); // 1-indexed
+  const [events, setEvents] = useState([]);
+  const [volunteers, setVolunteers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [selected, setSelected] = useState(null); // Date | null — day detail popover
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const [evRes, volRes] = await Promise.all([
+      supabase
+        .from("events")
+        .select(`${COL.event.id}, ${COL.event.title}, ${COL.event.date}, ${COL.event.endDate}`)
+        .order(COL.event.date, { ascending: true }),
+      supabase
+        .from("volunteers")
+        .select(
+          `${COL.volunteer.id}, ${COL.volunteer.name}, ${COL.volunteer.tier}, ${COL.volunteer.birthday}`
+        )
+        .order(COL.volunteer.name, { ascending: true }),
+    ]);
+    if (evRes.error || volRes.error) {
+      setError((evRes.error || volRes.error).message);
+    } else {
+      setEvents(evRes.data ?? []);
+      setVolunteers(volRes.data ?? []);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const prevMonth = () => {
+    if (month === 1) { setYear(y => y - 1); setMonth(12); }
+    else setMonth(m => m - 1);
+    setSelected(null);
+  };
+  const nextMonth = () => {
+    if (month === 12) { setYear(y => y + 1); setMonth(1); }
+    else setMonth(m => m + 1);
+    setSelected(null);
+  };
+  const goToday = () => {
+    setYear(today.getFullYear());
+    setMonth(today.getMonth() + 1);
+    setSelected(null);
+  };
+
+  const grid = useMemo(() => buildCalendarGrid(year, month), [year, month]);
+
+  // For each day in the grid, pre-compute what belongs on it.
+  const dayData = useMemo(() => {
+    return grid.map((date) => {
+      const dayEvents = events.filter((ev) => eventFallsOn(ev[COL.event.date], date));
+      const dayBirthdays = volunteers.filter((v) =>
+        birthdayFallsOn(v[COL.volunteer.birthday], date)
+      );
+      return { date, events: dayEvents, birthdays: dayBirthdays };
+    });
+  }, [grid, events, volunteers]);
+
+  // Detail for the selected day
+  const selectedData = useMemo(() => {
+    if (!selected) return null;
+    return dayData.find(
+      (d) =>
+        d.date.getFullYear() === selected.getFullYear() &&
+        d.date.getMonth() === selected.getMonth() &&
+        d.date.getDate() === selected.getDate()
+    );
+  }, [selected, dayData]);
+
+  // Upcoming events in the next 30 days from today
+  const upcoming = useMemo(() => {
+    const cutoff = new Date(today);
+    cutoff.setDate(cutoff.getDate() + 30);
+    return events
+      .filter((ev) => {
+        const d = parseEventDate(ev[COL.event.date]);
+        return d && d >= today && d <= cutoff;
+      })
+      .slice(0, 5);
+  }, [events]);
+
+  // Upcoming birthdays in the next 30 days (rolling year)
+  const upcomingBirthdays = useMemo(() => {
+    const results = [];
+    const todayMD = (today.getMonth() + 1) * 100 + today.getDate(); // numeric MMDD
+    for (const v of volunteers) {
+      const bd = parseBirthday(v[COL.volunteer.birthday]);
+      if (!bd) continue;
+      const bdMD = bd.month * 100 + bd.day;
+      // Handle year wrap-around (e.g. today is Dec 28, birthday is Jan 5)
+      const diff =
+        bdMD >= todayMD
+          ? bdMD - todayMD
+          : 10000 - todayMD + bdMD; // rough: > 31 days apart means next year
+      if (diff <= 30) results.push({ volunteer: v, month: bd.month, day: bd.day, diff });
+    }
+    return results.sort((a, b) => a.diff - b.diff);
+  }, [volunteers]);
+
+  const isCurrentMonth = (date) => date.getMonth() + 1 === month && date.getFullYear() === year;
+  const isToday = (date) =>
+    date.getFullYear() === today.getFullYear() &&
+    date.getMonth() === today.getMonth() &&
+    date.getDate() === today.getDate();
+
+  return (
+    <div className="space-y-8">
+      {/* ── Page header ── */}
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+            Calendar of activities
+          </h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Events and volunteer birthdays at a glance.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={goToday}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+        >
+          Today
+        </button>
+      </div>
+
+      {error && <ErrorBanner message={error} onRetry={load} />}
+
+      <div className="grid grid-cols-1 gap-8 xl:grid-cols-[1fr_300px]">
+        {/* ── Calendar grid ── */}
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
+          {/* Month navigation */}
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 px-5 py-4">
+            <button
+              onClick={prevMonth}
+              aria-label="Previous month"
+              className="rounded-lg p-1.5 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+              {MONTH_NAMES[month - 1]} {year}
+            </h2>
+            <button
+              onClick={nextMonth}
+              aria-label="Next month"
+              className="rounded-lg p-1.5 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* Day-of-week headers */}
+          <div className="grid grid-cols-7 border-b border-slate-100 dark:border-slate-800">
+            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => (
+              <div
+                key={d}
+                className="py-2 text-center text-xs font-medium text-slate-400 dark:text-slate-500"
+              >
+                {d}
+              </div>
+            ))}
+          </div>
+
+          {/* Day cells */}
+          {loading ? (
+            <div className="grid grid-cols-7">
+              {Array.from({ length: 42 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="h-20 border-b border-r border-slate-100 dark:border-slate-800 p-1 last:border-r-0"
+                >
+                  <Skeleton className="h-5 w-5 rounded-full" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-7">
+              {dayData.map(({ date, events: dayEvs, birthdays }, i) => {
+                const inMonth = isCurrentMonth(date);
+                const todayCell = isToday(date);
+                const isSelected =
+                  selected &&
+                  selected.getFullYear() === date.getFullYear() &&
+                  selected.getMonth() === date.getMonth() &&
+                  selected.getDate() === date.getDate();
+                const hasContent = dayEvs.length > 0 || birthdays.length > 0;
+                const isLastRow = i >= 35;
+                const isLastCol = (i + 1) % 7 === 0;
+
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setSelected(isSelected ? null : date)}
+                    className={[
+                      "relative min-h-[5rem] w-full p-1.5 text-left transition-colors",
+                      !isLastRow && "border-b",
+                      !isLastCol && "border-r",
+                      "border-slate-100 dark:border-slate-800",
+                      isSelected
+                        ? "bg-indigo-50 dark:bg-indigo-950/40"
+                        : hasContent
+                        ? "hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                        : "hover:bg-slate-50/70 dark:hover:bg-slate-800/30",
+                      "focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500",
+                    ].join(" ")}
+                    aria-label={`${date.toDateString()}${dayEvs.length ? `, ${dayEvs.length} event(s)` : ""}${birthdays.length ? `, ${birthdays.length} birthday(s)` : ""}`}
+                  >
+                    {/* Date number */}
+                    <span
+                      className={[
+                        "flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium",
+                        todayCell
+                          ? "bg-indigo-600 text-white"
+                          : inMonth
+                          ? "text-slate-800 dark:text-slate-200"
+                          : "text-slate-300 dark:text-slate-600",
+                      ].join(" ")}
+                    >
+                      {date.getDate()}
+                    </span>
+
+                    {/* Event pills — up to 2, then "+N more" */}
+                    <div className="mt-1 space-y-0.5">
+                      {dayEvs.slice(0, 2).map((ev) => (
+                        <div
+                          key={ev[COL.event.id]}
+                          className="truncate rounded bg-indigo-100 dark:bg-indigo-900/60 px-1 py-0.5 text-[10px] font-medium leading-tight text-indigo-700 dark:text-indigo-300"
+                          title={ev[COL.event.title]}
+                        >
+                          {ev[COL.event.title]}
+                        </div>
+                      ))}
+                      {dayEvs.length > 2 && (
+                        <div className="px-1 text-[10px] text-slate-400 dark:text-slate-500">
+                          +{dayEvs.length - 2} more
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Birthday dots */}
+                    {birthdays.length > 0 && (
+                      <div className="mt-0.5 flex flex-wrap gap-0.5 px-0.5">
+                        {birthdays.slice(0, 3).map((v) => (
+                          <span
+                            key={v[COL.volunteer.id]}
+                            className="inline-flex items-center gap-0.5 rounded bg-rose-100 dark:bg-rose-900/50 px-1 py-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-300"
+                            title={`🎂 ${v[COL.volunteer.name]}`}
+                          >
+                            🎂
+                            <span className="hidden sm:inline truncate max-w-[7rem]">
+                              {v[COL.volunteer.name]}
+                            </span>
+                          </span>
+                        ))}
+                        {birthdays.length > 3 && (
+                          <span className="text-[10px] text-rose-400">+{birthdays.length - 3}</span>
+                        )}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── Right sidebar: upcoming + day detail ── */}
+        <div className="space-y-6">
+          {/* Day detail popover */}
+          {selectedData && (
+            <div className="rounded-2xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-900 p-5 shadow-sm">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="font-semibold text-slate-900 dark:text-slate-100">
+                  {selectedData.date.toLocaleDateString(undefined, {
+                    weekday: "long",
+                    month: "long",
+                    day: "numeric",
+                  })}
+                </h3>
+                <button
+                  onClick={() => setSelected(null)}
+                  className="rounded p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  aria-label="Close"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {selectedData.events.length === 0 && selectedData.birthdays.length === 0 && (
+                <p className="text-sm text-slate-400 dark:text-slate-500">Nothing scheduled.</p>
+              )}
+
+              {selectedData.events.length > 0 && (
+                <div className="mb-3">
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-indigo-500 dark:text-indigo-400">
+                    Events
+                  </p>
+                  <ul className="space-y-2">
+                    {selectedData.events.map((ev) => (
+                      <li
+                        key={ev[COL.event.id]}
+                        className="rounded-lg border border-indigo-100 dark:border-indigo-900 bg-indigo-50/60 dark:bg-indigo-950/30 px-3 py-2"
+                      >
+                        <p className="text-sm font-medium text-indigo-900 dark:text-indigo-200">
+                          {ev[COL.event.title]}
+                        </p>
+                        {ev[COL.event.date] && (
+                          <p className="mt-0.5 flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400">
+                            <Clock className="h-3 w-3" />
+                            {formatEventTimeRange(ev[COL.event.date], ev[COL.event.endDate])}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {selectedData.birthdays.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-rose-500 dark:text-rose-400">
+                    Birthdays
+                  </p>
+                  <ul className="space-y-1.5">
+                    {selectedData.birthdays.map((v) => (
+                      <li
+                        key={v[COL.volunteer.id]}
+                        className="flex items-center gap-2 rounded-lg border border-rose-100 dark:border-rose-900 bg-rose-50/60 dark:bg-rose-950/30 px-3 py-2"
+                      >
+                        <Cake className="h-4 w-4 shrink-0 text-rose-500" />
+                        <span className="text-sm font-medium text-rose-900 dark:text-rose-200">
+                          {v[COL.volunteer.name]}
+                        </span>
+                        <TierBadge tier={v[COL.volunteer.tier]} />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Upcoming events (30 days) */}
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm">
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+              <CalendarDays className="h-4 w-4 text-indigo-500" />
+              Upcoming events
+              <span className="rounded-full bg-indigo-50 dark:bg-indigo-950/40 px-2 py-0.5 text-xs font-medium text-indigo-600 dark:text-indigo-300">
+                next 30 days
+              </span>
+            </h3>
+            {loading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12" />)}
+              </div>
+            ) : upcoming.length === 0 ? (
+              <p className="text-sm text-slate-400 dark:text-slate-500">No events in the next 30 days.</p>
+            ) : (
+              <ul className="space-y-2">
+                {upcoming.map((ev) => {
+                  const d = parseEventDate(ev[COL.event.date]);
+                  return (
+                    <li
+                      key={ev[COL.event.id]}
+                      className="flex items-start gap-3 rounded-lg border border-slate-100 dark:border-slate-800 p-3"
+                    >
+                      {/* Date badge */}
+                      <div className="flex shrink-0 flex-col items-center rounded-lg bg-indigo-600 px-2.5 py-1 text-white">
+                        <span className="text-[10px] font-semibold uppercase leading-tight">
+                          {d?.toLocaleString(undefined, { month: "short" })}
+                        </span>
+                        <span className="text-lg font-bold leading-tight">
+                          {d?.getDate()}
+                        </span>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                          {ev[COL.event.title]}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          {d?.toLocaleDateString(undefined, { weekday: "short" })}
+                          {ev[COL.event.date] &&
+                            `, ${formatEventTimeRange(ev[COL.event.date], ev[COL.event.endDate])}`}
+                        </p>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          {/* Upcoming birthdays (30 days) */}
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm">
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+              <Cake className="h-4 w-4 text-rose-500" />
+              Upcoming birthdays
+              <span className="rounded-full bg-rose-50 dark:bg-rose-950/40 px-2 py-0.5 text-xs font-medium text-rose-600 dark:text-rose-300">
+                next 30 days
+              </span>
+            </h3>
+            {loading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
+              </div>
+            ) : upcomingBirthdays.length === 0 ? (
+              <p className="text-sm text-slate-400 dark:text-slate-500">No birthdays in the next 30 days.</p>
+            ) : (
+              <ul className="space-y-2">
+                {upcomingBirthdays.map(({ volunteer, month: m, day: d, diff }) => (
+                  <li
+                    key={volunteer[COL.volunteer.id]}
+                    className="flex items-center gap-3 rounded-lg border border-rose-100 dark:border-rose-900 bg-rose-50/40 dark:bg-rose-950/20 px-3 py-2"
+                  >
+                    <span className="text-lg">🎂</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                        {volunteer[COL.volunteer.name]}
+                      </p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {MONTH_NAMES[m - 1]} {d}
+                      </p>
+                    </div>
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                        diff === 0
+                          ? "bg-rose-500 text-white"
+                          : diff <= 7
+                          ? "bg-rose-100 dark:bg-rose-900/60 text-rose-700 dark:text-rose-300"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
+                      }`}
+                    >
+                      {diff === 0 ? "Today! 🎉" : diff === 1 ? "Tomorrow" : `In ${diff} days`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /*  App shell                                                                 */
 /* -------------------------------------------------------------------------- */
 
 export default function App() {
+  const [view, setView] = useState("directory"); // "directory" | "calendar"
   const [selectedVolunteerId, setSelectedVolunteerId] = useState(null);
   const [showEventsManager, setShowEventsManager] = useState(false);
   const { session, isAdmin, loading: authLoading, signInWithGoogle, signOut } = useAuth();
   const { isDark, toggleDark } = useDarkMode();
 
+  // When switching away from directory, deselect any open profile.
+  const handleViewChange = (v) => {
+    setView(v);
+    if (v !== "directory") setSelectedVolunteerId(null);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased">
       <nav className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-2">
-            <CalendarCheck className="h-5 w-5 text-indigo-600" />
-            <span className="font-semibold">Volunteer tracker</span>
+          {/* Left: logo + tab nav */}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <CalendarCheck className="h-5 w-5 text-indigo-600" />
+              <span className="font-semibold">Volunteer tracker</span>
+            </div>
+            <div className="hidden sm:flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 p-0.5">
+              {[
+                { id: "directory", label: "Directory", Icon: Users },
+                { id: "calendar", label: "Calendar", Icon: CalendarDays },
+              ].map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => handleViewChange(id)}
+                  className={[
+                    "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500",
+                    view === id
+                      ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-sm"
+                      : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200",
+                  ].join(" ")}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
+
+          {/* Right: actions */}
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -1964,10 +2501,35 @@ export default function App() {
             )}
           </div>
         </div>
+
+        {/* Mobile-only bottom tab bar inside nav */}
+        <div className="flex sm:hidden border-t border-slate-200 dark:border-slate-800">
+          {[
+            { id: "directory", label: "Directory", Icon: Users },
+            { id: "calendar", label: "Calendar", Icon: CalendarDays },
+          ].map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => handleViewChange(id)}
+              className={[
+                "flex flex-1 items-center justify-center gap-1.5 py-2.5 text-sm font-medium transition-colors",
+                view === id
+                  ? "border-b-2 border-indigo-600 text-indigo-600"
+                  : "text-slate-500 dark:text-slate-400",
+              ].join(" ")}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </button>
+          ))}
+        </div>
       </nav>
 
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        {selectedVolunteerId === null ? (
+        {view === "calendar" ? (
+          <CalendarView />
+        ) : selectedVolunteerId === null ? (
           <DirectoryView onSelect={setSelectedVolunteerId} isAdmin={isAdmin} />
         ) : (
           <ProfileView
