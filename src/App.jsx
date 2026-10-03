@@ -31,6 +31,8 @@ import {
   Cake,
   ChevronLeft,
   ChevronRight,
+  Download,
+  FileSpreadsheet,
 } from "lucide-react";
 
 const supabase = createClient(
@@ -42,6 +44,12 @@ const ADMIN_EMAILS = [
   "jrsumalinab@gmail.com",
   "jsumalinab@addu.edu.ph",
 ];
+
+/* Only emails on this domain are allowed to sign in at all. */
+const ALLOWED_EMAIL_DOMAIN = "addu.edu.ph";
+
+/* TODO: replace with the real volunteer application Google Form/Docs link. */
+const VOLUNTEER_APPLICATION_URL = "https://bit.ly/ICOMMPVolsApp";
 
 function useDarkMode() {
   const [isDark, setIsDark] = useState(() => {
@@ -62,6 +70,7 @@ function useDarkMode() {
 
 function useAuth() {
   const [session, setSession] = useState(undefined);
+  const [wrongDomain, setWrongDomain] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -71,17 +80,72 @@ function useAuth() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  // The Google "hd" (hosted domain) param only narrows the account picker — it isn't
+  // enforced server-side, so a user can still pick a non-addu Google account. Catch that
+  // here and sign them straight back out rather than letting them see the app at all.
+  useEffect(() => {
+    if (!session) {
+      setWrongDomain(false);
+      return;
+    }
+    const email = session.user?.email ?? "";
+    if (!email.toLowerCase().endsWith(`@${ALLOWED_EMAIL_DOMAIN}`)) {
+      setWrongDomain(true);
+      supabase.auth.signOut();
+    } else {
+      setWrongDomain(false);
+    }
+  }, [session]);
+
   const signInWithGoogle = () => {
     supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin },
+      options: {
+        redirectTo: window.location.origin,
+        queryParams: { hd: ALLOWED_EMAIL_DOMAIN }, // narrows Google's account picker to the domain
+      },
     });
   };
 
   const signOut = () => supabase.auth.signOut();
   const isAdmin = !!session && ADMIN_EMAILS.includes(session.user?.email);
 
-  return { session, isAdmin, loading: session === undefined, signInWithGoogle, signOut };
+  return { session, isAdmin, loading: session === undefined, signInWithGoogle, signOut, wrongDomain };
+}
+
+/**
+ * Looks up whether the signed-in person's email matches a row in `volunteers`.
+ * Returns { checking, isVolunteer, volunteerId } — checking is true only while the
+ * lookup is in flight, so callers can show a brief loading state rather than a
+ * false "not a volunteer" flash.
+ */
+function useVolunteerRecognition(email) {
+  const [state, setState] = useState({ checking: true, isVolunteer: false, volunteerId: null });
+
+  useEffect(() => {
+    if (!email) {
+      setState({ checking: false, isVolunteer: false, volunteerId: null });
+      return;
+    }
+    let cancelled = false;
+    setState((s) => ({ ...s, checking: true }));
+    supabase
+      .from("volunteers")
+      .select(COL.volunteer.id)
+      .ilike(COL.volunteer.email, email) // case-insensitive match
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        setState({
+          checking: false,
+          isVolunteer: !error && !!data,
+          volunteerId: data?.[COL.volunteer.id] ?? null,
+        });
+      });
+    return () => { cancelled = true; };
+  }, [email]);
+
+  return state;
 }
 
 const COL = {
@@ -1707,6 +1771,250 @@ function ProfileView({ volunteerId, onBack, isAdmin, onVolunteerDeleted }) {
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Attendance export — admin-only CSV download of who attended which events  */
+/*  for a chosen week, month, or custom date range. Opens straight in Sheets. */
+/* -------------------------------------------------------------------------- */
+
+/** Wraps a CSV field in quotes and escapes embedded quotes, if needed. */
+function csvField(value) {
+  const str = value == null ? "" : String(value);
+  if (/[",\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+  return str;
+}
+
+/** Monday of the week containing `date` (local). */
+function startOfWeek(date) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = d.getDay(); // 0 = Sunday
+  const diff = day === 0 ? -6 : 1 - day; // shift back to Monday
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+function ExportAttendanceModal({ onClose }) {
+  const today = new Date();
+  const [range, setRange] = useState("week"); // "week" | "month" | "custom"
+  const [customStart, setCustomStart] = useState(todayLocalISO());
+  const [customEnd, setCustomEnd] = useState(todayLocalISO());
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState(null);
+  const [done, setDone] = useState(false);
+
+  const { rangeStart, rangeEnd, rangeLabel } = useMemo(() => {
+    if (range === "week") {
+      const start = startOfWeek(today);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 6);
+      return {
+        rangeStart: start,
+        rangeEnd: end,
+        rangeLabel: `Week of ${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${end.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`,
+      };
+    }
+    if (range === "month") {
+      const start = new Date(today.getFullYear(), today.getMonth(), 1);
+      const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      return {
+        rangeStart: start,
+        rangeEnd: end,
+        rangeLabel: `${MONTH_NAMES[today.getMonth()]} ${today.getFullYear()}`,
+      };
+    }
+    const start = parseLocalDate(customStart);
+    const end = parseLocalDate(customEnd);
+    return {
+      rangeStart: start,
+      rangeEnd: end,
+      rangeLabel: `${customStart} to ${customEnd}`,
+    };
+  }, [range, customStart, customEnd, today]);
+
+  const handleExport = async () => {
+    setError(null);
+    setDone(false);
+
+    if (range === "custom" && rangeEnd < rangeStart) {
+      setError("End date must be on or after the start date.");
+      return;
+    }
+
+    setExporting(true);
+    // Attendance rows with their event and volunteer embedded, filtered to the chosen range.
+    const startISO = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate(), 0, 0, 0).toISOString();
+    const endISO = new Date(rangeEnd.getFullYear(), rangeEnd.getMonth(), rangeEnd.getDate(), 23, 59, 59).toISOString();
+
+    const { data, error: fetchErr } = await supabase
+      .from("event_attendees")
+      .select(
+        `role_assigned, volunteers ( ${COL.volunteer.name}, ${COL.volunteer.email}, ${COL.volunteer.tier}, ${COL.volunteer.yearCourse} ), events!inner ( ${COL.event.title}, ${COL.event.date}, ${COL.event.endDate} )`
+      )
+      .gte(`events.${COL.event.date}`, startISO)
+      .lte(`events.${COL.event.date}`, endISO);
+
+    setExporting(false);
+
+    if (fetchErr) {
+      setError(fetchErr.message);
+      return;
+    }
+
+    // The embedded-filter above still returns rows whose event falls outside
+    // the range with events: null in some Postgrest setups, so filter client-side too.
+    const rows = (data ?? []).filter((r) => {
+      const d = parseEventDate(r.events?.[COL.event.date]);
+      return d && d >= rangeStart && d <= rangeEnd;
+    });
+
+    if (rows.length === 0) {
+      setError("No attendance records found in that range.");
+      return;
+    }
+
+    // Sort by event date, then volunteer name.
+    rows.sort((a, b) => {
+      const dA = parseEventDate(a.events?.[COL.event.date])?.getTime() ?? 0;
+      const dB = parseEventDate(b.events?.[COL.event.date])?.getTime() ?? 0;
+      if (dA !== dB) return dA - dB;
+      return (a.volunteers?.[COL.volunteer.name] ?? "").localeCompare(b.volunteers?.[COL.volunteer.name] ?? "");
+    });
+
+    const header = ["Event", "Event date", "Event time", "Volunteer name", "Email", "Tier", "Program & year", "Role"];
+    const lines = [header.map(csvField).join(",")];
+
+    for (const r of rows) {
+      const ev = r.events;
+      const vol = r.volunteers;
+      const d = parseEventDate(ev?.[COL.event.date]);
+      lines.push(
+        [
+          ev?.[COL.event.title] ?? "",
+          d ? d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "",
+          ev?.[COL.event.date] ? formatEventTimeRange(ev[COL.event.date], ev[COL.event.endDate]) : "",
+          vol?.[COL.volunteer.name] ?? "",
+          vol?.[COL.volunteer.email] ?? "",
+          vol?.[COL.volunteer.tier] === "core" ? "Core member" : "Volunteer",
+          vol?.[COL.volunteer.yearCourse] ?? "",
+          r.role_assigned ?? "",
+        ]
+          .map(csvField)
+          .join(",")
+      );
+    }
+
+    const csvContent = "\uFEFF" + lines.join("\r\n"); // BOM so Sheets/Excel read UTF-8 correctly
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const fileRangeTag = range === "week" ? `week-${todayLocalISO()}` : range === "month" ? `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}` : `${customStart}_to_${customEnd}`;
+    a.href = url;
+    a.download = `attendance-${fileRangeTag}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    setDone(true);
+  };
+
+  const inputClass =
+    "w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 dark:bg-black/60 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
+            <FileSpreadsheet className="h-5 w-5 text-emerald-600" />
+            Export attendance
+          </h3>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
+          Downloads a CSV of who attended which events — opens straight in Google Sheets or Excel.
+        </p>
+
+        <div className="space-y-4">
+          <div className="flex gap-2 text-sm">
+            {[
+              { id: "week", label: "This week" },
+              { id: "month", label: "This month" },
+              { id: "custom", label: "Custom" },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => { setRange(opt.id); setError(null); setDone(false); }}
+                className={`rounded-lg border px-3 py-1.5 font-medium transition ${
+                  range === opt.id
+                    ? "border-indigo-600 bg-indigo-600 text-white"
+                    : "border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+
+          {range === "custom" && (
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Start date</span>
+                <input type="date" value={customStart} onChange={(e) => { setCustomStart(e.target.value); setError(null); setDone(false); }} className={inputClass} />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">End date</span>
+                <input type="date" value={customEnd} onChange={(e) => { setCustomEnd(e.target.value); setError(null); setDone(false); }} className={inputClass} />
+              </label>
+            </div>
+          )}
+
+          <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-sm text-slate-600 dark:text-slate-300">
+            <span className="font-medium">Range:</span> {rangeLabel}
+          </div>
+
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+          {done && <p className="text-sm text-emerald-600 dark:text-emerald-400">CSV downloaded.</p>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={handleExport}
+              disabled={exporting}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+              {exporting ? "Exporting…" : "Download CSV"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 function CalendarView() {
@@ -1969,17 +2277,104 @@ function CalendarView() {
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Access gate screens — shown instead of the app itself                     */
+/* -------------------------------------------------------------------------- */
+
+function SignInScreen({ onSignIn, wrongDomain }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950 px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 text-center shadow-sm">
+        <CalendarCheck className="mx-auto h-10 w-10 text-indigo-600" />
+        <h1 className="mt-4 text-xl font-bold text-slate-900 dark:text-slate-100">Volunteer tracker</h1>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+          Sign in with your AdDU email to continue.
+        </p>
+        {wrongDomain && (
+          <div className="mt-4 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/40 p-3 text-sm text-red-700 dark:text-red-300">
+            That account isn't an @{ALLOWED_EMAIL_DOMAIN} email. Please sign in with your AdDU Google account.
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={onSignIn}
+          className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+        >
+          <LogIn className="h-4 w-4" />
+          Sign in with Google
+        </button>
+        <p className="mt-4 text-xs text-slate-400 dark:text-slate-500">
+          Only @{ALLOWED_EMAIL_DOMAIN} accounts can access this tracker.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function NotAVolunteerScreen({ email, onSignOut }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950 px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 text-center shadow-sm">
+        <Users className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600" />
+        <h1 className="mt-4 text-lg font-bold text-slate-900 dark:text-slate-100">You're currently not a volunteer</h1>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+          {email} isn't in our volunteer directory yet.
+        </p>
+        <a
+          href={VOLUNTEER_APPLICATION_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+        >
+          Apply now
+        </a>
+        <button
+          type="button"
+          onClick={onSignOut}
+          className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [view, setView] = useState("directory");
   const [selectedVolunteerId, setSelectedVolunteerId] = useState(null);
   const [showEventsManager, setShowEventsManager] = useState(false);
-  const { session, isAdmin, loading: authLoading, signInWithGoogle, signOut } = useAuth();
+  const [showExportAttendance, setShowExportAttendance] = useState(false);
+  const { session, isAdmin, loading: authLoading, signInWithGoogle, signOut, wrongDomain } = useAuth();
   const { isDark, toggleDark } = useDarkMode();
+  const { checking: checkingVolunteer, isVolunteer } = useVolunteerRecognition(session?.user?.email ?? null);
 
   const handleViewChange = (v) => {
     setView(v);
     if (v !== "directory") setSelectedVolunteerId(null);
   };
+
+  // Gate 1: not signed in (or just got kicked out for using a non-AdDU account).
+  if (!authLoading && !session) {
+    return <SignInScreen onSignIn={signInWithGoogle} wrongDomain={wrongDomain} />;
+  }
+
+  // Gate 2: signed in with a valid AdDU email, but still checking / not found in volunteers.
+  // Admins always pass this gate even if they aren't in the volunteers table themselves,
+  // since they're managing the roster rather than being on it.
+  if (session && !isAdmin) {
+    if (checkingVolunteer) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950">
+          <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+        </div>
+      );
+    }
+    if (!isVolunteer) {
+      return <NotAVolunteerScreen email={session.user.email} onSignOut={signOut} />;
+    }
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased">
@@ -2007,6 +2402,12 @@ export default function App() {
               <button onClick={() => setShowEventsManager(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">
                 <Calendar className="h-3.5 w-3.5" />
                 Manage events
+              </button>
+            )}
+            {isAdmin && (
+              <button onClick={() => setShowExportAttendance(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">
+                <Download className="h-3.5 w-3.5" />
+                Export
               </button>
             )}
             {authLoading ? (
@@ -2055,6 +2456,7 @@ export default function App() {
         )}
       </main>
       {isAdmin && showEventsManager && <EventsManagerModal onClose={() => setShowEventsManager(false)} />}
+      {isAdmin && showExportAttendance && <ExportAttendanceModal onClose={() => setShowExportAttendance(false)} />}
       <Analytics />
     </div>
   );
